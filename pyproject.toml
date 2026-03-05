@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "biocypher-project-template"
+version = "0.11.0"
+description = "Template for creating a BioCypher-driven knowledge graph"
+readme = "README.md"
+authors = [
+    {name = "Sebastian Lobentanzer", email = "sebastian.lobentanzer@gmail.com"},
+    {name = "Andreas Maier", email = "andreas.maier-1@uni-hamburg.de"},
+]
+requires-python = ">=3.11"
+license = {text = "MIT"}
+
+dependencies = [
+    "biocypher>=0.11.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["template_package"]
+
+# ------------------------
+# ---- LEGACY SUPPORT ----
+# Legacy Poetry support (for backwards compatibility)
+# Note: This content can be deleted once the migration period expire.
+[tool.poetry]
+name = "biocypher-project-template"
+version = "0.1.0"
+description = "Template for creating a BioCypher-driven knowledge graph"
+authors = [
+    "Sebastian Lobentanzer <sebastian.lobentanzer@gmail.com>",
+    "Andreas Maier <andreas.maier-1@uni-hamburg.de>",
+]
+license = "MIT"
+readme = "README.md"
+packages = [{include = "template_package"}]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+biocypher = ">=0.11.0"
+#------------------------------------------------------------------------
