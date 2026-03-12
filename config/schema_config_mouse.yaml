@@ -1,0 +1,67 @@
+# schema_config_mouse.yaml
+# BioCypher schema for the MOUSE gene-phenotype knowledge graph.
+#
+# Mouse genes are identified by their official gene symbol (e.g. "Trp53"),
+# consistent with the GO annotation layer and easier to read in Neo4j queries.
+#
+# Phenotypic features: MP top-level terms (shared with human graph for
+# cross-species comparison).
+#
+# Ontological backbone: Biolink Model v3.2.1
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Nodes
+# ═══════════════════════════════════════════════════════════════════
+
+mouse gene:
+  represented_as: node
+  preferred_id: hgnc.symbol   # mouse gene symbol; same id type as human for simplicity
+  label_in_input: mouse gene
+  is_a: gene
+  properties:
+    symbol: str
+    organism: str
+
+# Shared with human graph — same node IDs (MP:xxxxxxx) in both graphs
+# enable direct cross-species comparison in Neo4j.
+mp top term:
+  represented_as: node
+  preferred_id: mp
+  label_in_input: mp top term
+  is_a: phenotypic feature
+  properties:
+    mp_id: str
+    name: str
+
+go term:
+  represented_as: node
+  preferred_id: go
+  label_in_input: go term
+  is_a: ontology class
+  properties:
+    go_id: str
+    namespace: str
+    name: str
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Edges
+# ═══════════════════════════════════════════════════════════════════
+
+mouse gene has mp top term:
+  represented_as: edge
+  label_in_input: mouse gene has mp top term
+  is_a: gene to phenotypic feature association
+  source: mouse gene
+  target: mp top term
+
+mouse gene has go term:
+  represented_as: edge
+  label_in_input: mouse gene has go term
+  is_a: association
+  source: mouse gene
+  target: go term
+  properties:
+    evidence_codes: str[]
+    aspect: str
