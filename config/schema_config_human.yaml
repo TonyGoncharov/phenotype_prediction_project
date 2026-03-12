@@ -1,0 +1,66 @@
+# schema_config_human.yaml
+# BioCypher schema for the HUMAN gene-phenotype knowledge graph.
+#
+# Phenotypic features: MP top-level terms (shared with mouse graph for
+# cross-species comparison).  Human genes connect to them directly
+# (gene → mp_top) via a path collapsed from gene → HP → MP → MP top
+# during the export pipeline.
+#
+# Ontological backbone: Biolink Model v3.2.1
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Nodes
+# ═══════════════════════════════════════════════════════════════════
+
+human gene:
+  represented_as: node
+  preferred_id: hgnc.symbol
+  label_in_input: human gene
+  is_a: gene
+  properties:
+    symbol: str
+    organism: str
+
+# Shared with mouse graph — same node IDs (MP:xxxxxxx) in both graphs
+# enable direct cross-species comparison in Neo4j.
+mp top term:
+  represented_as: node
+  preferred_id: mp
+  label_in_input: mp top term
+  is_a: phenotypic feature
+  properties:
+    mp_id: str
+    name: str
+
+go term:
+  represented_as: node
+  preferred_id: go
+  label_in_input: go term
+  is_a: ontology class
+  properties:
+    go_id: str
+    namespace: str
+    name: str
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Edges
+# ═══════════════════════════════════════════════════════════════════
+
+human gene has mp top term:
+  represented_as: edge
+  label_in_input: human gene has mp top term
+  is_a: gene to phenotypic feature association
+  source: human gene
+  target: mp top term
+
+human gene has go term:
+  represented_as: edge
+  label_in_input: human gene has go term
+  is_a: association
+  source: human gene
+  target: go term
+  properties:
+    evidence_codes: str[]
+    aspect: str
