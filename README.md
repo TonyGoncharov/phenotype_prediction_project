@@ -1,207 +1,181 @@
-# BioCypher project template
+# Phenotype Prediction Project
 
-> [!NOTE]
-> This template is deprecated. In the future, we will maintain our
-> [cookiecutter](https://github.com/biocypher/biocypher-cookiecutter-template)
-> template instead.
+A pipeline for building cross-species gene-phenotype knowledge graphs using [BioCypher](https://biocypher.org/). It integrates human and mouse genetic data with phenotype ontologies and Gene Ontology annotations, producing Neo4j-ready import files.
 
-A quick way to set up a BioCypher-driven knowledge graph pipeline. Please make
-sure to refer to the [Usage](#-usage) section for details on how it works.
+The pipeline builds two parallel graphs - **human** and **mouse** - that share the same Mammalian Phenotype (MP) top-level term nodes, enabling direct cross-species comparison in Neo4j.
 
-## Using the GitHub Template functionality
+## Data sources
 
-You can use this template in GitHub directly. Just select 
-`biocypher/project-template` as your template when creating a new repository
-on GitHub.
+| File | Source | Description |
+|------|--------|-------------|
+| `genes_to_phenotype.txt` | [HPO](https://hpo.jax.org/) | Human gene → HPO phenotype annotations |
+| `MGI_PhenoGenoMP.rpt` | [MGI](https://www.informatics.jax.org/) | Mouse genotype → MP annotations |
+| `mp_hp_mgi_all.sssom.tsv` | [mapping-commons](https://github.com/mapping-commons/mh_mapping_initiative) | HP ↔ MP cross-species mapping (SSSOM) |
+| `gene2go.gz` | [NCBI](https://ftp.ncbi.nlm.nih.gov/gene/DATA/) | Gene → GO term mappings (all species) |
+| `gene_info.gz` | [NCBI](https://ftp.ncbi.nlm.nih.gov/gene/DATA/) | Gene symbols and MGI cross-references |
+| `hp.obo` | [OBO Foundry](https://purl.obolibrary.org/obo/hp.obo) | Human Phenotype Ontology |
+| `mp.obo` | [OBO Foundry](https://purl.obolibrary.org/obo/mp.obo) | Mammalian Phenotype Ontology |
+| `go-basic.obo` | [Gene Ontology](https://purl.obolibrary.org/obo/go/go-basic.obo) | Gene Ontology (basic) |
 
-## ⚙️ Installation (local, for docker see below)
+## Graph structure
 
-> [!NOTE]
-> These are manual installation instructions. If you created the repository
-> using the above GitHub template functionality, you don't need to do the
-> first two steps. Instead, just clone the repository you have created.
+Each species graph contains three node types and two edge types:
 
-1. Clone this repository and rename to your project name.
-```{bash}
-git clone https://github.com/biocypher/project-template.git
-mv project-template my-project
-cd my-project
 ```
-2. Make the repository your own.
-```{bash}
-rm -rf .git
-git init
-git add .
-git commit -m "Initial commit"
-# (you can add your remote repository here)
+[HumanGene / MouseGene]
+    ├──(has mp top term)──▶ [MpTopTerm]     (shared across species)
+    └──(has go term)──────▶ [GoTerm]
 ```
-3. Install the dependencies. We recommend [uv](https://docs.astral.sh/uv/) for best performance, but [Poetry](https://python-poetry.org/) is also supported:
 
-!!! Note:
-    The BioCypher project is in the process of migrating to uv.
-    We recommend all users adopt uv, as backward compatibility with Poetry is planned to be phased out in future versions.
+Node properties include human-readable names for MP top terms and GO terms, gene symbols, and GO namespace/evidence codes on edges.
 
-**Using uv (recommended):**
-```{bash}
+## Installation
+
+### Prerequisites
+
+- Python 3.10+
+- [uv](https://docs.astral.sh/uv/) (recommended) or pip
+- Neo4j 5.x (for graph import)
+
+### Setup
+
+```bash
+git clone <repository-url>
+cd phenotype_prediction_project
 uv sync
 ```
 
-**Using Poetry:**
-```{bash}
-poetry install
+### Download data
+
+A helper script fetches all required files into `data/`:
+
+```bash
+bash src/utils/download_data.sh
 ```
 
-1. You are ready to go!
+To verify everything is in place:
 
-**With uv:**
-```{bash}
-uv run python create_knowledge_graph.py
+```bash
+bash src/utils/check_data.sh
 ```
 
-**With Poetry:**
-```{bash}
-poetry run python create_knowledge_graph.py
+## Usage
+
+### Full pipeline (both species)
+
+```bash
+uv run python run.py
 ```
 
-## 🛠 Usage
+This runs these steps:
 
-### Structure
-The project template is structured as follows:
+1. **Phenotype edges** - maps human genes to MP top-level terms via HPO→MP (SSSOM), maps mouse genes to MP top-level terms via MGI.
+2. **GO annotations (human)** - links human genes to GO terms from NCBI gene2go (taxon 9606, non-IEA evidence).
+3. **GO annotations (mouse)** - links mouse genes to GO terms (taxon 10090, non-IEA evidence).
+4. **Graph build** - feeds intermediate TSVs into BioCypher, producing Neo4j-admin-import-ready CSVs.
+
+Planned layers (not yet available):
+
+- **Gene expression data**
+- **Protein-protein interaction data**
+
+Output:
+
 ```
-.
-│  # Project setup
-│
+biocypher_out/
+  human/   ← CSVs + neo4j-admin-import-call.sh
+  mouse/   ← CSVs + neo4j-admin-import-call.sh
+```
+
+### Single species
+
+```bash
+uv run python run.py --species human
+uv run python run.py --species mouse
+```
+
+### Skip layers or steps
+
+```bash
+# Build without GO annotations
+uv run python run.py --skip-layers go
+
+# Skip TSV export (reuse existing TSVs, rebuild graph only)
+uv run python run.py --skip-export --clean-graph
+```
+
+### Clean rebuild
+
+```bash
+uv run python run.py --clean-tsv --clean-graph
+```
+
+### Import into Neo4j
+
+Make sure Neo4j is stopped, then run the generated import script:
+
+```bash
+bash biocypher_out/human/neo4j-admin-import-call.sh
+```
+
+> **Note:** The path to `neo4j-admin` in the generated script is controlled by `import_call_bin_prefix` in `config/biocypher_config.yaml`. Set it to match your system (e.g. `/opt/homebrew/bin/` on macOS with Homebrew).
+
+### All CLI options
+
+```
+uv run python run.py --help
+```
+
+| Flag | Description |
+|------|-------------|
+| `--species {human,mouse,both}` | Which graph(s) to build (default: `both`) |
+| `--skip-export` | Skip TSV generation, use existing files |
+| `--skip-layers go` | Skip specific layers |
+| `--clean-tsv` | Delete and recreate intermediate TSVs |
+| `--clean-graph` | Delete and recreate BioCypher output |
+| `--all-mappings` | Keep all HP→MP mappings instead of best-ranked only |
+| `--data-dir PATH` | Directory containing .obo files (default: `data/`) |
+| `--graph-out PATH` | Output directory (default: `biocypher_out/`) |
+| `--biocypher-config PATH` | Path to `biocypher_config.yaml` |
+
+## Project structure
+```
+├── run.py                          # Main entry point
+├── config/
+│   ├── biocypher_config.yaml       # BioCypher + Neo4j settings
+│   ├── schema_config_human.yaml    # Human graph schema (Biolink)
+│   └── schema_config_mouse.yaml    # Mouse graph schema (Biolink)
+├── src/
+│   ├── build_graph.py              # BioCypher graph assembly
+│   ├── adapters/
+│   │   ├── base.py                 # BaseAdapter with shared I/O
+│   │   ├── gene_to_phenotype_adapter.py
+│   │   └── gene_ontology_adapter.py
+│   ├── layers/
+│   │   ├── gene_to_phenotype_export.py  # HPO/MGI → TSV export
+│   │   └── gene_ontology_export.py      # gene2go → TSV export
+│   └── utils/
+│       ├── gene_info.py            # NCBI gene_info parser
+│       ├── check_data.sh           # Validate data files
+│       └── download_data.sh        # Fetch all data files
+├── pyproject.toml                  # Project metadata and dependencies
+├── uv.lock                         # Pinned dependency versions
+├── data/                           # Input data (not in git, fetched by download_data.sh)
 ├── LICENSE
-├── README.md
-├── pyproject.toml
-│
-│  # Docker setup
-│
-├── Dockerfile
-├── docker
-│   ├── biocypher_entrypoint_patch.sh
-│   ├── create_table.sh
-│   └── import.sh
-├── docker-compose.yml
-├── docker-variables.env
-│
-│  # Project pipeline
-│
-├── create_knowledge_graph.py
-├── config
-│   ├── biocypher_config.yaml
-│   ├── biocypher_docker_config.yaml
-│   └── schema_config.yaml
-└── template_package
-    └── adapters
-        └── example_adapter.py
+└── README.md
 ```
 
-The main components of the BioCypher pipeline are the
-`create_knowledge_graph.py`, the configuration in the `config` directory, and
-the adapter module in the `template_package` directory. The latter can be used
-to publish your own adapters (see below). You can also use other adapters from
-anywhere on GitHub, PyPI, or your local machine.
+## Adding a new layer
 
-**The BioCypher ecosystem relies on the collection of adapters (planned, in
-development, or already available) to inform the community about the available
-data sources and to facilitate the creation of knowledge graphs. If you think
-your adapter could be useful for others, please create an issue for it on the
-[main BioCypher repository](https://github.com/biocypher/biocypher/issues).**
+> **This section is a work in progress.**
 
-In addition, the docker setup is provided to run the pipeline (from the same
-python script) in a docker container, and subsequently load the knowledge graph
-into a Neo4j instance (also from a docker container). This is useful if you want
-to run the pipeline on a server, or if you want to run it in a reproducible
-environment.
+<!-- TODO: document the full process with a concrete example -->
 
-### Running the pipeline
+In brief, adding a new data layer (e.g. expression, protein interactions) involves four files:
 
-`python create_knowledge_graph.py` will create a knowledge graph from the
-example data included in this repository (borrowed from the [BioCypher
-tutorial](https://biocypher.org/BioCypher/learn/tutorials/tutorial001_basics/)).
-To do that, it uses the following components:
+1. **Adapter** - create `src/adapters/<name>_adapter.py` with `Human<Name>Adapter` and `Mouse<Name>Adapter` inheriting from `BaseAdapter`. Set `layer_name` as a class attribute.
+2. **Export** - create `src/layers/<name>_export.py` with the pipeline that reads raw data and writes intermediate TSVs.
+3. **Registration** - add the adapter classes to `SPECIES_LAYERS` in `src/build_graph.py`.
+4. **Schema** - add node/edge definitions to `config/schema_config_human.yaml` and `config/schema_config_mouse.yaml`.
 
-- `create_knowledge_graph.py`: the main script that orchestrates the pipeline.
-It brings together the BioCypher package with the data sources. To build a 
-knowledge graph, you need at least one adapter (see below). For common 
-resources, there may already be an adapter available in the BioCypher package or
-in a separate repository. You can also write your own adapter, should none be
-available for your data.
-
-- `example_adapter.py` (in `template_package.adapters`): a module that defines
-the adapter to the data source. In this case, it is a random generator script.
-If you want to create your own adapters, we recommend to use the example adapter
-as a blueprint and create one python file per data source, approproately named.
-You can then import the adapter in `create_knowledge_graph.py` and add it to
-the pipeline. This way, you ensure that others can easily install and use your 
-adapters.
-
-- `schema_config.yaml`: a configuration file (found in the `config` directory)
-that defines the schema of the knowledge graph. It is used by BioCypher to map
-the data source to the knowledge representation on the basis of ontology (see
-[this part of the BioCypher 
-tutorial](https://biocypher.org/BioCypher/learn/tutorials/tutorial002_handling_ontologies/)).
-
-- `biocypher_config.yaml`: a configuration file (found in the `config` 
-directory) that defines some BioCypher parameters, such as the mode, the 
-separators used, and other options. More on its use can be found in the
-[Documentation](https://biocypher.org/BioCypher/reference/biocypher-config/).
-
-### Publishing your own adapters
-
-After adding your adapter(s) to the `adapters` directory, you may want to
-publish them for easier reuse. To create a package to distribute your own
-adapter(s), we recommend using [uv](https://docs.astral.sh/uv/). uv,
-after setup, allows you to build and publish your package to PyPI using simple
-commands. To set up your package, rename the `template_package` directory to
-your desired package name and update the `pyproject.toml` file accordingly. Most
-importantly, update the `name`,`author`, and `version` fields. You can also add
-a `description` and a `license`.  Then, you can build and publish your package to PyPI
-using the following commands:
-
-```{bash}
-uv build
-uv publish
-```
-
-```{bash}
-poetry build
-poetry publish
-```
-
-If you don't want to publish your package to PyPI, you can also install it from
-GitHub using uv or pip.
-
-### Further reading / code
-
-If you want to see a second example of the workflow, check our
-[CollecTRI](https://github.com/biocypher/collectri) pipeline. Its README describes
-the process of data assessment and adapter creation in more detail.
-
-## 🐳 Docker
-
-This repo also contains a `docker compose` workflow to create the example
-database using BioCypher and load it into a dockerised Neo4j instance
-automatically. To run it, simply execute `docker compose up -d` in the root 
-directory of the project. This will start up a single (detached) docker
-container with a Neo4j instance that contains the knowledge graph built by
-BioCypher as the DB `neo4j` (the default DB), which you can connect to and
-browse at localhost:7474. Authentication is deactivated by default and can be
-modified in the `docker_variables.env` file (in which case you need to provide
-the .env file to the deploy stage of the `docker-compose.yml`).
-
-Regarding the BioCypher build procedure, the `biocypher_docker_config.yaml` file
-is used instead of the `biocypher_config.yaml` (configured in
-`scripts/build.sh`). Everything else is the same as in the local setup. The
-first container (`build`) installs and runs the BioCypher pipeline, the second
-container (`import`) installs Neo4j and runs the import, and the third container
-(`deploy`) deploys the Neo4j instance on localhost. The files are shared using a
-Docker Volume. This three-stage setup strictly is not necessary for the mounting
-of a read-write instance of Neo4j, but is required if the purpose is to provide
-a read-only instance (e.g. for a web app) that is updated regularly; for an
-example, see the [meta graph
-repository](https://github.com/biocypher/meta-graph). The read-only setting is
-configured in the `docker-compose.yml` file
-(`NEO4J_dbms_databases_default__to__read__only: "false"`) and is deactivated by
-default.
+See the existing phenotype and GO layers for reference.
