@@ -1,4 +1,4 @@
-# add your settings here (overriding the defaults)
+# biocypher_config.yaml
 
 biocypher:
   offline: true
@@ -11,3 +11,6 @@ neo4j:
   array_delimiter: "|"
   skip_duplicate_nodes: true
   skip_bad_relationships: true
+  node_labels_order: Ascending
+  edge_labels_order: Leaves
+  import_call_bin_prefix: /opt/homebrew/bin/
