@@ -40,7 +40,7 @@ Node properties include human-readable names for MP top terms and GO terms, gene
 ### Setup
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/TonyGoncharov/phenotype_prediction_project.git
 cd phenotype_prediction_project
 uv sync
 ```
