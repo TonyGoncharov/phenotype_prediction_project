@@ -25,6 +25,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from src.utils.gene_info import build_mouse_symbol_maps
+
 IEA_CODES: frozenset[str] = frozenset({"IEA"})
 
 HUMAN_TAX_ID = "9606"
@@ -95,75 +97,6 @@ def build_ncbi_to_hgnc_map(genes_to_phenotype_path: str | Path) -> dict[str, str
         .set_index("ncbi_gene_id")["gene_symbol"]
         .to_dict()
     )
-
-
-def build_mouse_symbol_maps(
-    gene_info_path: str | Path,
-) -> tuple[dict[str, str], dict[str, str]]:
-    """Build mouse gene symbol maps from NCBI gene_info file.
-
-    The gene_info file (gene_info.gz) is tab-separated with columns:
-      tax_id, GeneID, Symbol, LocusTag, Synonyms, dbXrefs, ...
-
-    The dbXrefs column contains pipe-separated cross-references such as
-    "MGI:MGI:98834|..." for mouse genes.
-
-    Returns
-    -------
-    ncbi_to_symbol : dict[str, str]
-        Maps NCBI GeneID (str) → official mouse gene Symbol.
-    mgi_to_symbol : dict[str, str]
-        Maps MGI accession ID (e.g. "MGI:98834") → official mouse gene Symbol.
-        Used to replace mgi_id identifiers in the phenotype pipeline.
-    """
-    path = Path(gene_info_path)
-    if not path.exists():
-        raise FileNotFoundError(
-            f"NCBI gene_info file not found at {path}.\n"
-            "Download with:\n"
-            "  curl -L https://ftp.ncbi.nlm.nih.gov/gene/DATA/gene_info.gz "
-            "-o data/gene_info.gz"
-        )
-
-    df = pd.read_csv(
-        path,
-        sep="\t",
-        dtype=str,
-        comment="#",
-        header=None,
-        names=[
-            "tax_id", "GeneID", "Symbol", "LocusTag", "Synonyms",
-            "dbXrefs", "chromosome", "map_location", "description",
-            "type_of_gene", "Symbol_auth", "Full_name_auth",
-            "Nomenclature_status", "Other_designations",
-            "Modification_date", "Feature_type",
-        ],
-        usecols=["tax_id", "GeneID", "Symbol", "dbXrefs"],
-    )
-
-    mouse = df[df["tax_id"] == MOUSE_TAX_ID].copy()
-
-    ncbi_to_symbol: dict[str, str] = (
-        mouse[["GeneID", "Symbol"]]
-        .dropna()
-        .drop_duplicates(subset=["GeneID"])
-        .set_index("GeneID")["Symbol"]
-        .to_dict()
-    )
-
-    # Parse MGI IDs from dbXrefs: "MGI:MGI:98834|Ensembl:..." → "MGI:98834"
-    mgi_to_symbol: dict[str, str] = {}
-    for _, row in mouse[["Symbol", "dbXrefs"]].dropna().iterrows():
-        for xref in str(row["dbXrefs"]).split("|"):
-            xref = xref.strip()
-            if xref.startswith("MGI:MGI:"):
-                mgi_id = "MGI:" + xref[len("MGI:MGI:"):]
-                mgi_to_symbol[mgi_id] = row["Symbol"]
-            elif xref.startswith("MGI:") and not xref.startswith("MGI:MGI:"):
-                # Some older entries use plain "MGI:XXXXXX"
-                mgi_to_symbol[xref] = row["Symbol"]
-
-    return ncbi_to_symbol, mgi_to_symbol
 
 
 # ------------------------------------------------------------------ #
