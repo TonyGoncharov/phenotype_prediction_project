@@ -43,6 +43,16 @@ go term:
     namespace: str
     name: str
 
+# GTEx tissues — IDs use GTEX: prefix (e.g. GTEX:Brain_Amygdala).
+# is_a: gross anatomical structure maps to the Biolink anatomy hierarchy.
+tissue:
+  represented_as: node
+  preferred_id: gtex
+  label_in_input: tissue
+  is_a: gross anatomical structure
+  properties:
+    name: str
+
 
 # ═══════════════════════════════════════════════════════════════════
 #  Edges
@@ -64,3 +74,14 @@ human gene has go term:
   properties:
     evidence_codes: str[]
     aspect: str
+
+# GTEx expression edges.
+# median_tpm stores the GTEx median TPM value that passed the threshold.
+human gene expressed in tissue:
+  represented_as: edge
+  label_in_input: human gene expressed in tissue
+  is_a: gene to expression site association
+  source: human gene
+  target: tissue
+  properties:
+    median_tpm: float

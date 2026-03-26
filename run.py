@@ -46,6 +46,7 @@ from pathlib import Path
 
 from src.layers.gene_to_phenotype_export import run_pipeline as run_phenotype_pipeline
 from src.layers.gene_ontology_export import run_go_pipeline, run_mouse_go_pipeline
+from src.layers.gene_expression_export import run_expression_pipeline
 from src.build_graph import build
 
 
@@ -55,14 +56,15 @@ from src.build_graph import build
 # species: "human", "mouse", or "both"
 # layer:   None = always needed; "go" = only when GO layer is active
 _REQUIRED_FILES: list[tuple[str, str, str, str | None]] = [
-    ("hp.obo",                   "Human Phenotype Ontology",            "both",  None),
-    ("mp.obo",                   "Mammalian Phenotype Ontology",        "both",  None),
-    ("genes_to_phenotype.txt",   "HPO gene-to-phenotype annotations",   "human", None),
-    ("mp_hp_mgi_all.sssom.tsv",  "HP-to-MP SSSOM cross-species mapping","human", None),
-    ("MGI_PhenoGenoMP.rpt",      "MGD genotype-to-MP annotations",      "mouse", None),
-    ("gene_info.gz",             "NCBI gene info (symbol + MGI xrefs)", "mouse", None),
-    ("gene2go.gz",               "NCBI Gene-to-GO mappings",            "both",  "go"),
-    ("go-basic.obo",             "Gene Ontology (basic)",               "both",  "go"),
+    ("hp.obo", "Human Phenotype Ontology", "both",  None),
+    ("mp.obo", "Mammalian Phenotype Ontology", "both",  None),
+    ("genes_to_phenotype.txt", "HPO gene-to-phenotype annotations", "human", None),
+    ("mp_hp_mgi_all.sssom.tsv", "HP-to-MP SSSOM cross-species mapping","human", None),
+    ("MGI_PhenoGenoMP.rpt", "MGD genotype-to-MP annotations", "mouse", None),
+    ("gene_info.gz", "NCBI gene info (symbol + MGI xrefs)", "mouse", None),
+    ("gene2go.gz", "NCBI Gene-to-GO mappings", "both",  "go"),
+    ("go-basic.obo", "Gene Ontology (basic)", "both",  "go"),
+    ("GTEx_Analysis_v10_RNASeQCv2.4.2_gene_median_tpm.gct.gz",   "GTEx median gene expression (GCT)", "human", "expression")
 ]
 
 
@@ -109,6 +111,7 @@ def check_data(args: argparse.Namespace, skip_layers: list[str]) -> None:
         "mp_hp_mgi_all.sssom.tsv": Path(args.sssom),
         "gene2go.gz":              Path(args.gene2go),
         "gene_info.gz":            Path(args.gene_info),
+        "gtex_median_tpm.gct.gz":  Path(args.gtex)
     }
 
     print(f"Checking required data files in: {data_dir}/")
@@ -157,14 +160,19 @@ def parse_args() -> argparse.Namespace:
     )
     # -- Input files -------------------------------------------------------
     p.add_argument("--genes-to-phenotype", default="data/genes_to_phenotype.txt")
-    p.add_argument("--mgi",                default="data/MGI_PhenoGenoMP.rpt")
-    p.add_argument("--sssom",              default="data/mp_hp_mgi_all.sssom.tsv")
-    p.add_argument("--gene2go",            default="data/gene2go.gz")
-    p.add_argument("--gene-info",          default="data/gene_info.gz",
+    p.add_argument("--mgi", default="data/MGI_PhenoGenoMP.rpt")
+    p.add_argument("--sssom", default="data/mp_hp_mgi_all.sssom.tsv")
+    p.add_argument("--gene2go", default="data/gene2go.gz")
+    p.add_argument("--gene-info", default="data/gene_info.gz",
                    help="NCBI gene_info.gz — provides MGI→symbol mapping for mouse "
                         "(https://ftp.ncbi.nlm.nih.gov/gene/DATA/gene_info.gz)")
-    p.add_argument("--data-dir",           default="data/",
-                   help="Directory containing *.obo files")
+    p.add_argument("--data-dir", default="data/",
+                   help="Directory containing *.obo files"),
+    p.add_argument("--gtex", default="data/GTEx_Analysis_v10_RNASeQCv2.4.2_gene_median_tpm.gct.gz",
+                    help="GTEx median TPM GCT file "
+                    "(https://gtexportal.org/home/datasets)")
+    p.add_argument("--tpm-threshold", type=float, default=5.0,
+                    help="Minimum median TPM for a gene-tissue edge (default: 5.0)")
 
     # -- Output ------------------------------------------------------------
     p.add_argument("--tsv-out",   default="graph_tsv/")
@@ -254,6 +262,18 @@ def main() -> None:
                 gene_info_path=args.gene_info,
                 data_dir=args.data_dir,
                 out_dir=tsv_out,
+            )
+            print(f"-> {tsv_out.resolve()}\n")
+
+        # -- Step 4: GTEx expression edges — human only ----------------
+        if "expression" not in skip_layers and args.species in ("human", "both"):
+            print("=" * 60)
+            print("Step 4 -- GTEx expression edges, human")
+            print("=" * 60)
+            run_expression_pipeline(
+                gtex_path=args.gtex,
+                out_dir=tsv_out,
+                tpm_threshold=args.tpm_threshold,
             )
             print(f"-> {tsv_out.resolve()}\n")
 

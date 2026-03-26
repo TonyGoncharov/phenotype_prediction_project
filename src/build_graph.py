@@ -18,6 +18,7 @@ import biocypher
 
 from src.adapters.gene_to_phenotype_adapter import HumanPhenotypeAdapter, MousePhenotypeAdapter
 from src.adapters.gene_ontology_adapter import HumanGOAdapter, MouseGOAdapter
+from src.adapters.gene_expression_adapter import HumanExpressionAdapter
 
 Species = Literal["human", "mouse", "both"]
 
@@ -30,7 +31,7 @@ SPECIES_LAYERS: dict[str, list] = {
     "human": [
         HumanPhenotypeAdapter,
         HumanGOAdapter,
-        # HumanExpressionAdapter,  ← uncomment when ready
+        HumanExpressionAdapter
     ],
     "mouse": [
         MousePhenotypeAdapter,
