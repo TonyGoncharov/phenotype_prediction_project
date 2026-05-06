@@ -1,17 +1,10 @@
-'''
-src/adapters/gene_to_phenotype_adapter.py
-'''
+"""src/adapters/gene_to_phenotype_adapter.py"""
 
 from __future__ import annotations
 
 from typing import Generator
 
 from src.adapters.base import BaseAdapter, NodeTuple, EdgeTuple
-
-
-def _sanitize(value: str) -> str:
-    """Remove single quotes that break neo4j-admin CSV import (quote char = ')."""
-    return value.replace("'", "")
 
 
 class PhenotypeAdapter(BaseAdapter):
@@ -36,14 +29,28 @@ class PhenotypeAdapter(BaseAdapter):
                 f"Phenotype layer: missing TSV files in {self.data_dir}:\n  "
                 + "\n  ".join(missing)
             )
+        names_present = (self.data_dir / "node_mp_top_names.tsv").exists()
+        self.logger.debug(
+            "Initialised — edge file: %s, MP names file: %s",
+            self._EDGE_FILE,
+            "found" if names_present else "absent (names will be empty strings)",
+        )
 
     def get_nodes(self) -> Generator[NodeTuple, None, None]:
+        yield from self._count_nodes(
+            self._raw_nodes(),
+            label=self.layer_name,
+        )
+
+    def _raw_nodes(self) -> Generator[NodeTuple, None, None]:
         yield from self._gene_nodes()
         yield from self._mp_top_term_nodes()
 
     def _gene_nodes(self) -> Generator[NodeTuple, None, None]:
         df = self._read(self._EDGE_FILE)
-        for symbol in df["gene_symbol"].dropna().unique():
+        unique_genes = df["gene_symbol"].dropna().unique()
+        self.logger.debug("Gene nodes to emit: %d", len(unique_genes))
+        for symbol in unique_genes:
             node_id = f"{self._ID_PREFIX}{symbol}" if self._ID_PREFIX else symbol
             yield (node_id, self._GENE_LABEL, {
                 "symbol": symbol,
@@ -52,21 +59,29 @@ class PhenotypeAdapter(BaseAdapter):
 
     def _mp_top_term_nodes(self) -> Generator[NodeTuple, None, None]:
         df = self._read(self._EDGE_FILE)
-        # Load human-readable names produced by the phenotype export step
         names_file = "node_mp_top_names.tsv"
         mp_names: dict[str, str] = {}
         if (self.data_dir / names_file).exists():
             names_df = self._read(names_file)
             if "mp_id" in names_df.columns and "name" in names_df.columns:
                 mp_names = dict(zip(names_df["mp_id"], names_df["name"]))
-        for mp_top_id in df["mp_top_id"].dropna().unique():
+        unique_tops = df["mp_top_id"].dropna().unique()
+        self.logger.debug("MP top-term nodes to emit: %d", len(unique_tops))
+        for mp_top_id in unique_tops:
             yield (mp_top_id, "mp top term", {
                 "mp_id": mp_top_id,
-                "name": _sanitize(mp_names.get(mp_top_id, "")),
+                "name": self._sanitize(mp_names.get(mp_top_id, "")),
             })
 
     def get_edges(self) -> Generator[EdgeTuple, None, None]:
+        yield from self._count_edges(
+            self._raw_edges(),
+            label=self.layer_name,
+        )
+
+    def _raw_edges(self) -> Generator[EdgeTuple, None, None]:
         df = self._read(self._EDGE_FILE).dropna(subset=["gene_symbol", "mp_top_id"])
+        self.logger.debug("Phenotype edges to emit: %d", len(df))
         for r in df.itertuples(index=False):
             gene_id = f"{self._ID_PREFIX}{r.gene_symbol}" if self._ID_PREFIX else r.gene_symbol
             yield (gene_id, r.mp_top_id, self._EDGE_LABEL, {})
