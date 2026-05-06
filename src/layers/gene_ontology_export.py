@@ -1,31 +1,15 @@
-"""export_go_edges.py - GO annotation pipeline for the gene-phenotype KG.
-
-Data sources
-------------
-  gene2go       - NCBI Gene → GO term mappings
-                  https://ftp.ncbi.nlm.nih.gov/gene/DATA/gene2go.gz
-                  Filtered to: human (tax_id=9606) and/or mouse (tax_id=10090),
-                  evidence code != IEA
-  gene_info     - NCBI gene info (symbol + MGI cross-refs for mouse)
-                  https://ftp.ncbi.nlm.nih.gov/gene/DATA/gene_info.gz
-  go-basic.obo  - Gene Ontology (obo format) — used only to validate term IDs
-                  https://purl.obolibrary.org/obo/go/go-basic.obo
-
-Outputs (written to out_dir)
-----------------------------
-  edge_human_gene_has_go.tsv      - HumanGene → GOTerm
-  edge_mouse_gene_has_go.tsv      - MouseGene → GOTerm
-  qc_go_unmapped_genes.tsv        - human genes with no GO annotation (QC)
-  qc_go_unmapped_mouse_genes.tsv  - mouse genes with no GO annotation (QC)
-"""
+"""export_go_edges.py - GO annotation pipeline for the gene-phenotype KG."""
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pandas as pd
 
 from src.utils.gene_info import build_mouse_symbol_maps
+
+logger = logging.getLogger(__name__)
 
 IEA_CODES: frozenset[str] = frozenset({"IEA"})
 
@@ -34,22 +18,13 @@ MOUSE_TAX_ID = "10090"
 
 
 # ------------------------------------------------------------------ #
-# Ontology helpers
-# ------------------------------------------------------------------ #
-
-
-# ------------------------------------------------------------------ #
 # Data readers
 # ------------------------------------------------------------------ #
 
 def read_gene2go(path: str | Path, tax_id: str) -> pd.DataFrame:
-    """Read NCBI gene2go file, keeping only genes of *tax_id* with non-IEA evidence.
-
-    Returns a DataFrame with columns:
-      ncbi_gene_id, go_id, evidence_code, aspect
-    where aspect in {P, F, C}.
-    """
+    """Read NCBI gene2go file, keeping only genes of *tax_id* with non-IEA evidence."""
     path = Path(path)
+    logger.debug("Reading gene2go from %s (tax_id=%s)", path, tax_id)
     df = pd.read_csv(
         path,
         sep="\t",
@@ -59,8 +34,14 @@ def read_gene2go(path: str | Path, tax_id: str) -> pd.DataFrame:
         names=["tax_id", "GeneID", "GO_ID", "Evidence", "Qualifier",
                "GO_term", "PubMed", "Category"],
     )
+    before = len(df)
     df = df[df["tax_id"] == tax_id].copy()
     df = df[~df["Evidence"].isin(IEA_CODES)].copy()
+    logger.debug(
+        "gene2go: %d total rows → %d retained after filtering (tax_id=%s, excl. IEA)",
+        before, len(df), tax_id,
+    )
+
     df = df.rename(columns={
         "GeneID": "ncbi_gene_id",
         "GO_ID": "go_id",
@@ -82,6 +63,7 @@ def read_gene2go(path: str | Path, tax_id: str) -> pd.DataFrame:
 
 def build_ncbi_to_hgnc_map(genes_to_phenotype_path: str | Path) -> dict[str, str]:
     """Build {ncbi_gene_id → hgnc_symbol} from the HPO annotation file."""
+    logger.debug("Building NCBI→HGNC map from %s", genes_to_phenotype_path)
     df = pd.read_csv(genes_to_phenotype_path, sep="\t", dtype=str)
     required = {"ncbi_gene_id", "gene_symbol"}
     missing = required - set(df.columns)
@@ -90,17 +72,19 @@ def build_ncbi_to_hgnc_map(genes_to_phenotype_path: str | Path) -> dict[str, str
             f"genes_to_phenotype file missing columns for HGNC mapping: {missing}. "
             f"Got: {list(df.columns)}"
         )
-    return (
+    mapping = (
         df[["ncbi_gene_id", "gene_symbol"]]
         .dropna()
         .drop_duplicates()
         .set_index("ncbi_gene_id")["gene_symbol"]
         .to_dict()
     )
+    logger.debug("NCBI→HGNC map: %d entries", len(mapping))
+    return mapping
 
 
 # ------------------------------------------------------------------ #
-# Edge builders (shared between species)
+# Edge builders
 # ------------------------------------------------------------------ #
 
 def build_gene_go_edges(
@@ -108,18 +92,20 @@ def build_gene_go_edges(
     ncbi_to_symbol: dict[str, str],
     gene_col: str = "gene_symbol",
 ) -> pd.DataFrame:
-    """Map gene2go annotations to gene symbols.
-
-    Returns a DataFrame with columns:
-      <gene_col>, go_id, go_name, evidence_code, aspect
-    """
+    """Map gene2go annotations to gene symbols."""
     df = gene2go.copy()
     df[gene_col] = df["ncbi_gene_id"].map(ncbi_to_symbol)
+    before = len(df)
     df = df.dropna(subset=[gene_col])
+    unmapped = before - len(df)
+    if unmapped:
+        logger.debug("%d gene2go rows dropped: no symbol mapping found", unmapped)
     out_cols = [gene_col, "go_id", "evidence_code", "aspect"]
     if "go_name" in df.columns:
         out_cols.insert(2, "go_name")
-    return df[out_cols].drop_duplicates()
+    result = df[out_cols].drop_duplicates()
+    logger.debug("Gene→GO edges built: %d", len(result))
+    return result
 
 
 # ------------------------------------------------------------------ #
@@ -129,26 +115,23 @@ def build_gene_go_edges(
 def run_go_pipeline(
     gene2go_path: str | Path,
     genes_to_phenotype_path: str | Path,
-    data_dir: str | Path,
     out_dir: str | Path = "./out",
 ) -> dict[str, pd.DataFrame]:
-    """Run the GO annotation pipeline for HUMAN genes (tax_id=9606).
-
-    Outputs written to *out_dir*:
-        edge_human_gene_has_go.tsv   - gene_symbol, go_id, evidence_code, aspect
-        qc_go_unmapped_genes.tsv     - human gene symbols with no GO annotation
-    """
+    """Run the GO annotation pipeline for HUMAN genes (tax_id=9606)."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    print("Reading gene2go annotations (human)...")
-    gene2go = read_gene2go(gene2go_path, tax_id=HUMAN_TAX_ID)
+    logger.info("Starting GO pipeline (human)")
+    logger.info("gene2go                : %s", gene2go_path)
+    logger.info("genes_to_phenotype     : %s", genes_to_phenotype_path)
+    logger.info("Output dir             : %s", out_dir)
 
-    print("Building NCBI → HGNC symbol map...")
+    gene2go = read_gene2go(gene2go_path, tax_id=HUMAN_TAX_ID)
     ncbi_to_hgnc = build_ncbi_to_hgnc_map(genes_to_phenotype_path)
 
     gene_go = build_gene_go_edges(gene2go, ncbi_to_hgnc, gene_col="gene_symbol")
     gene_go.to_csv(out_dir / "edge_human_gene_has_go.tsv", sep="\t", index=False)
+    logger.debug("Written: edge_human_gene_has_go.tsv")
 
     annotated = set(gene_go["gene_symbol"].dropna())
     all_genes = set(ncbi_to_hgnc.values())
@@ -157,10 +140,10 @@ def run_go_pipeline(
         out_dir / "qc_go_unmapped_genes.tsv", sep="\t", index=False
     )
 
-    print(f"Gene→GO edges          : {len(gene_go)}")
-    print(f"Unique genes annotated : {gene_go['gene_symbol'].nunique()}")
-    print(f"Unique GO terms        : {gene_go['go_id'].nunique()}")
-    print(f"Genes without GO annot.: {len(unmapped)}")
+    logger.info("Gene→GO edges          : %d", len(gene_go))
+    logger.info("Unique genes annotated : %d", gene_go["gene_symbol"].nunique())
+    logger.info("Unique GO terms        : %d", gene_go["go_id"].nunique())
+    logger.info("Genes without GO annot.: %d", len(unmapped))
 
     return {"gene_go": gene_go}
 
@@ -168,26 +151,26 @@ def run_go_pipeline(
 def run_mouse_go_pipeline(
     gene2go_path: str | Path,
     gene_info_path: str | Path,
-    data_dir: str | Path,
     out_dir: str | Path = "./out",
 ) -> dict[str, pd.DataFrame]:
-    """Run the GO annotation pipeline for MOUSE genes (tax_id=10090).
-
-    Outputs written to *out_dir*:
-        edge_mouse_gene_has_go.tsv        - gene_symbol, go_id, evidence_code, aspect
-        qc_go_unmapped_mouse_genes.tsv    - mouse gene symbols with no GO annotation
-    """
+    """Run the GO annotation pipeline for MOUSE genes (tax_id=10090)."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    print("Reading gene2go annotations (mouse)...")
+    logger.info("Starting GO pipeline (mouse)")
+    logger.info("gene2go    : %s", gene2go_path)
+    logger.info("gene_info  : %s", gene_info_path)
+    logger.info("Output dir : %s", out_dir)
+
     gene2go = read_gene2go(gene2go_path, tax_id=MOUSE_TAX_ID)
 
-    print("Building NCBI → mouse gene symbol map...")
+    logger.debug("Building NCBI→mouse symbol map")
     ncbi_to_symbol, _ = build_mouse_symbol_maps(gene_info_path)
+    logger.debug("NCBI→mouse symbol map: %d entries", len(ncbi_to_symbol))
 
     gene_go = build_gene_go_edges(gene2go, ncbi_to_symbol, gene_col="gene_symbol")
     gene_go.to_csv(out_dir / "edge_mouse_gene_has_go.tsv", sep="\t", index=False)
+    logger.debug("Written: edge_mouse_gene_has_go.tsv")
 
     annotated = set(gene_go["gene_symbol"].dropna())
     all_symbols = set(ncbi_to_symbol.values())
@@ -196,16 +179,17 @@ def run_mouse_go_pipeline(
         out_dir / "qc_go_unmapped_mouse_genes.tsv", sep="\t", index=False
     )
 
-    print(f"Mouse gene→GO edges      : {len(gene_go)}")
-    print(f"Unique genes annotated   : {gene_go['gene_symbol'].nunique()}")
-    print(f"Unique GO terms          : {gene_go['go_id'].nunique()}")
-    print(f"Genes without GO annot.  : {len(unmapped)}")
+    logger.info("Mouse gene→GO edges      : %d", len(gene_go))
+    logger.info("Unique genes annotated   : %d", gene_go["gene_symbol"].nunique())
+    logger.info("Unique GO terms          : %d", gene_go["go_id"].nunique())
+    logger.info("Genes without GO annot.  : %d", len(unmapped))
 
     return {"gene_go": gene_go}
 
 
 if __name__ == "__main__":
     import argparse
+    from src.utils.logging_config import setup_logging
 
     p = argparse.ArgumentParser(description="Export GO annotation edges.")
     p.add_argument("--gene2go", required=True)
@@ -213,10 +197,11 @@ if __name__ == "__main__":
                    help="HPO genes_to_phenotype.txt (required for --species human)")
     p.add_argument("--gene-info", default=None,
                    help="NCBI gene_info.gz (required for --species mouse)")
-    p.add_argument("--data-dir", required=True)
     p.add_argument("--out", default="./out")
     p.add_argument("--species", choices=["human", "mouse", "both"], default="both")
     args = p.parse_args()
+
+    setup_logging(out_dir=args.out)
 
     if args.species in ("human", "both"):
         if not args.genes_to_phenotype:
@@ -224,7 +209,6 @@ if __name__ == "__main__":
         run_go_pipeline(
             gene2go_path=args.gene2go,
             genes_to_phenotype_path=args.genes_to_phenotype,
-            data_dir=args.data_dir,
             out_dir=args.out,
         )
 
@@ -234,6 +218,5 @@ if __name__ == "__main__":
         run_mouse_go_pipeline(
             gene2go_path=args.gene2go,
             gene_info_path=args.gene_info,
-            data_dir=args.data_dir,
             out_dir=args.out,
         )
