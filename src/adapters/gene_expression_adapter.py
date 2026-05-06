@@ -7,11 +7,6 @@ from typing import Generator
 from src.adapters.base import BaseAdapter, NodeTuple, EdgeTuple
 
 
-def _sanitize(value: str) -> str:
-    """Remove single quotes that break neo4j-admin CSV import (quote char = ')."""
-    return value.replace("'", "")
-
-
 class HumanExpressionAdapter(BaseAdapter):
     """Adapter for the GTEx gene-expression layer (human only).
 
@@ -43,16 +38,30 @@ class HumanExpressionAdapter(BaseAdapter):
                 f"Expression layer: missing TSV files in {self.data_dir}:\n  "
                 + "\n  ".join(missing)
             )
+        tissue_present = (self.data_dir / self._TISSUE_FILE).exists()
+        self.logger.debug(
+            "Initialised — edge file: %s, tissue node file: %s",
+            self._EDGE_FILE,
+            "found" if tissue_present else "absent (will derive from edge file)",
+        )
 
     # ── Nodes ──────────────────────────────────────────────────────── #
 
     def get_nodes(self) -> Generator[NodeTuple, None, None]:
+        yield from self._count_nodes(
+            self._raw_nodes(),
+            label=self.layer_name,
+        )
+
+    def _raw_nodes(self) -> Generator[NodeTuple, None, None]:
         yield from self._gene_nodes()
         yield from self._tissue_nodes()
 
     def _gene_nodes(self) -> Generator[NodeTuple, None, None]:
         df = self._read(self._EDGE_FILE)
-        for symbol in df["gene_symbol"].dropna().unique():
+        unique_genes = df["gene_symbol"].dropna().unique()
+        self.logger.debug("Gene nodes to emit: %d", len(unique_genes))
+        for symbol in unique_genes:
             yield (f"{self._ID_PREFIX}{symbol}", self._GENE_LABEL, {
                 "symbol": symbol,
                 "organism": self._ORGANISM,
@@ -68,30 +77,36 @@ class HumanExpressionAdapter(BaseAdapter):
             tissue_df = self._read(self._TISSUE_FILE)
             required = {"tissue_id", "tissue_name"}
             if required.issubset(set(tissue_df.columns)):
+                self.logger.debug("Tissue nodes to emit: %d (from %s)",
+                                  len(tissue_df), self._TISSUE_FILE)
                 for r in tissue_df.itertuples(index=False):
                     yield (r.tissue_id, "tissue", {
-                        "name": _sanitize(r.tissue_name),
+                        "name": self._sanitize(r.tissue_name),
                     })
                 return
 
         # Fallback: derive from edge file
+        self.logger.debug("Tissue node file absent — deriving tissue nodes from edge file")
         edge_df = self._read(self._EDGE_FILE)
-        for r in (
-            edge_df[["tissue_id", "tissue_name"]]
-            .drop_duplicates(subset=["tissue_id"])
-            .itertuples(index=False)
-        ):
+        tissue_df = edge_df[["tissue_id", "tissue_name"]].drop_duplicates(subset=["tissue_id"])
+        self.logger.debug("Tissue nodes to emit: %d (derived)", len(tissue_df))
+        for r in tissue_df.itertuples(index=False):
             yield (r.tissue_id, "tissue", {
-                "name": _sanitize(r.tissue_name),
+                "name": self._sanitize(r.tissue_name),
             })
 
     # ── Edges ──────────────────────────────────────────────────────── #
 
     def get_edges(self) -> Generator[EdgeTuple, None, None]:
+        yield from self._count_edges(
+            self._raw_edges(),
+            label=self.layer_name,
+        )
+
+    def _raw_edges(self) -> Generator[EdgeTuple, None, None]:
         df = self._read(self._EDGE_FILE).dropna(subset=["gene_symbol", "tissue_id"])
-
+        self.logger.debug("Expression edges to emit: %d", len(df))
         has_tpm = "median_tpm" in df.columns
-
         for r in df.itertuples(index=False):
             props: dict = {}
             if has_tpm:
