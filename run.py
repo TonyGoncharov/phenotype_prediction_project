@@ -11,15 +11,19 @@ Usage
 
 Required data files (put in data/)
 -------------------------------------
+  HP2MP.tsv                - HP→MP anchor mapping from MGI
   genes_to_phenotype.txt   - HPO gene→phenotype annotations
   MGI_PhenoGenoMP.rpt      - MGD genotype→MP annotations
-  mp_hp_mgi_all.sssom.tsv  - HP→MP SSSOM cross-species mapping
   gene2go.gz               - NCBI Gene→GO mappings (all species)
   gene_info.gz             - NCBI gene info (symbol + MGI cross-refs)
                              https://ftp.ncbi.nlm.nih.gov/gene/DATA/gene_info.gz
   data/hp.obo              - HP ontology
   data/mp.obo              - MP ontology
   data/go-basic.obo        - GO ontology
+  BIOGRID-ALL-*.tab3.txt   - BioGRID protein-protein interactions (human, tab3)
+                             https://downloads.thebiogrid.org/BioGRID
+  data/uberon_basic.obo    - Uberon anatomical ontology (basic, no cross-ontology imports)
+                             wget http://purl.obolibrary.org/obo/uberon/basic.obo
 
 Output layout (--species both, the default)
 ---------------------------------------------
@@ -29,11 +33,11 @@ Output layout (--species both, the default)
 
 Adding a new data layer
 -----------------------
-  1. Create src/layers/<n>/adapter.py with Human<N>Adapter and Mouse<N>Adapter
+  1. Create adapter.py with Human<N>Adapter and Mouse<N>Adapter
      inheriting BaseAdapter.  Set layer_name on each subclass.
-  2. Create src/layers/<n>/export.py with the export pipeline.
-  3. Register both adapter classes in src/pipeline/build_graph.py → SPECIES_LAYERS.
-  4. Add schema sections to config/schema_config_human.yaml / _mouse.yaml.
+  2. Create export.py with the export pipeline.
+  3. Register both adapter classes in build_graph.py → SPECIES_LAYERS.
+  4. Add schema sections to schema_config_human.yaml / _mouse.yaml.
   5. Add the export call below (Step N).
 """
 
@@ -44,10 +48,14 @@ import shutil
 import sys
 from pathlib import Path
 
+from src.layers.phenotype_mapping import run_mapping
 from src.layers.gene_to_phenotype_export import run_pipeline as run_phenotype_pipeline
 from src.layers.gene_ontology_export import run_go_pipeline, run_mouse_go_pipeline
 from src.layers.gene_expression_export import run_expression_pipeline
+from src.layers.ppi_export import run_ppi_pipeline
+from src.layers.uberon_export import run_uberon_pipeline
 from src.build_graph import build
+from src.utils.logging_config import setup_logging
 
 
 # ── Data-file validation ──────────────────────────────────────────── #
@@ -56,26 +64,43 @@ from src.build_graph import build
 # species: "human", "mouse", or "both"
 # layer:   None = always needed; "go" = only when GO layer is active
 _REQUIRED_FILES: list[tuple[str, str, str, str | None]] = [
-    ("hp.obo", "Human Phenotype Ontology", "both",  None),
-    ("mp.obo", "Mammalian Phenotype Ontology", "both",  None),
-    ("genes_to_phenotype.txt", "HPO gene-to-phenotype annotations", "human", None),
-    ("mp_hp_mgi_all.sssom.tsv", "HP-to-MP SSSOM cross-species mapping","human", None),
-    ("MGI_PhenoGenoMP.rpt", "MGD genotype-to-MP annotations", "mouse", None),
-    ("gene_info.gz", "NCBI gene info (symbol + MGI xrefs)", "mouse", None),
-    ("gene2go.gz", "NCBI Gene-to-GO mappings", "both",  "go"),
-    ("go-basic.obo", "Gene Ontology (basic)", "both",  "go"),
-    ("GTEx_Analysis_v10_RNASeQCv2.4.2_gene_median_tpm.gct.gz",   "GTEx median gene expression (GCT)", "human", "expression")
+    ("hp.obo",                    "Human Phenotype Ontology",             "both",  None),
+    ("mp.obo",                    "Mammalian Phenotype Ontology",          "both",  None),
+    ("genes_to_phenotype.txt",    "HPO gene-to-phenotype annotations",     "human", None),
+    ("HP2MP.tsv",                 "HP→MP anchor mapping from MGI",         "human", None),
+    ("MGI_PhenoGenoMP.rpt",       "MGD genotype-to-MP annotations",        "mouse", None),
+    ("gene_info.gz",              "NCBI gene info (symbol + MGI xrefs)",   "mouse", None),
+    ("gene2go.gz",                "NCBI Gene-to-GO mappings",              "both",  "go"),
+    (
+        "GTEx_Analysis_v10_RNASeQCv2.4.2_gene_median_tpm.gct.gz",
+        "GTEx median gene expression (GCT)",
+        "human",
+        "expression",
+    ),
+    (
+        "BIOGRID-ALL-5.0.256.tab3.txt",
+        "BioGRID protein-protein interactions (tab3)",
+        "human",
+        "ppi",
+    ),
+    (
+        "basic.obo",
+        "Uberon anatomical ontology (basic, no imports)",
+        "human",
+        "uberon",
+    ),
+    # uberon/basic.obo is OPTIONAL — the pipeline runs in stub-mode without it.
+    # It is therefore NOT in this list; a missing OBO file produces a warning,
+    # not a hard exit.  Only add it here if you want to enforce full metadata.
 ]
 
 
 def _file_needed(species: str, skip_layers: list[str], req_species: str, layer: str | None) -> bool:
     """Return True if the file is required for this run configuration."""
-    # Species filter
     if req_species == "human" and species == "mouse":
         return False
     if req_species == "mouse" and species == "human":
         return False
-    # Layer filter
     if layer and layer in skip_layers:
         return False
     return True
@@ -106,12 +131,14 @@ def check_data(args: argparse.Namespace, skip_layers: list[str]) -> None:
     # Build a map of logical names → actual paths for files that may
     # be specified via their own CLI flags (overriding the data_dir default).
     path_overrides: dict[str, Path] = {
-        "genes_to_phenotype.txt":  Path(args.genes_to_phenotype),
-        "MGI_PhenoGenoMP.rpt":     Path(args.mgi),
-        "mp_hp_mgi_all.sssom.tsv": Path(args.sssom),
-        "gene2go.gz":              Path(args.gene2go),
-        "gene_info.gz":            Path(args.gene_info),
-        "gtex_median_tpm.gct.gz":  Path(args.gtex)
+        "genes_to_phenotype.txt": Path(args.genes_to_phenotype),
+        "MGI_PhenoGenoMP.rpt":    Path(args.mgi),
+        "HP2MP.tsv":              Path(args.hp2mp),
+        "gene2go.gz":             Path(args.gene2go),
+        "gene_info.gz":           Path(args.gene_info),
+        "GTEx_Analysis_v10_RNASeQCv2.4.2_gene_median_tpm.gct.gz": Path(args.gtex),
+        "BIOGRID-ALL-5.0.256.tab3.txt":   Path(args.biogrid),
+        "basic.obo":       Path(args.uberon_obo),
     }
 
     print(f"Checking required data files in: {data_dir}/")
@@ -127,9 +154,9 @@ def check_data(args: argparse.Namespace, skip_layers: list[str]) -> None:
         checked += 1
         if filepath.exists():
             size = _human_size(filepath.stat().st_size)
-            print(f"  ✓  {filename:<30s}  {size:>8s}  {description}")
+            print(f"  ✓  {filename:<55s}  {size:>8s}  {description}")
         else:
-            print(f"  ✗  {filename:<30s}  {'MISSING':>8s}  {description}")
+            print(f"  ✗  {filename:<55s}  {'MISSING':>8s}  {description}")
             missing.append((str(filepath), description))
 
     print("─" * 60)
@@ -147,7 +174,7 @@ def check_data(args: argparse.Namespace, skip_layers: list[str]) -> None:
         print(f"     {description}")
     print()
     print("Fetch all files automatically:")
-    print("  bash download_data.sh")
+    print("  bash scripts/download_data.sh")
     print()
     print("Or download individual files manually — see README / run.py docstring.")
     print("=" * 60 + "\n")
@@ -160,19 +187,27 @@ def parse_args() -> argparse.Namespace:
     )
     # -- Input files -------------------------------------------------------
     p.add_argument("--genes-to-phenotype", default="data/genes_to_phenotype.txt")
-    p.add_argument("--mgi", default="data/MGI_PhenoGenoMP.rpt")
-    p.add_argument("--sssom", default="data/mp_hp_mgi_all.sssom.tsv")
-    p.add_argument("--gene2go", default="data/gene2go.gz")
+    p.add_argument("--mgi",      default="data/MGI_PhenoGenoMP.rpt")
+    p.add_argument("--hp2mp",    default="data/HP2MP.tsv",
+                   help="HP→MP anchor mapping file from MGI")
+    p.add_argument("--gene2go",  default="data/gene2go.gz")
     p.add_argument("--gene-info", default="data/gene_info.gz",
                    help="NCBI gene_info.gz — provides MGI→symbol mapping for mouse "
                         "(https://ftp.ncbi.nlm.nih.gov/gene/DATA/gene_info.gz)")
     p.add_argument("--data-dir", default="data/",
-                   help="Directory containing *.obo files"),
+                   help="Directory containing *.obo files")
     p.add_argument("--gtex", default="data/GTEx_Analysis_v10_RNASeQCv2.4.2_gene_median_tpm.gct.gz",
-                    help="GTEx median TPM GCT file "
-                    "(https://gtexportal.org/home/datasets)")
+                   help="GTEx median TPM GCT file "
+                        "(https://gtexportal.org/home/datasets)")
     p.add_argument("--tpm-threshold", type=float, default=5.0,
-                    help="Minimum median TPM for a gene-tissue edge (default: 5.0)")
+                   help="Minimum median TPM for a gene-tissue edge (default: 5.0)")
+    p.add_argument("--biogrid", default="data/BIOGRID-ALL-5.0.256.tab3.txt",
+                   help="BioGRID tab3 file (full dump or human-specific). "
+                        "Download from https://downloads.thebiogrid.org/BioGRID")
+    p.add_argument("--uberon-obo", default="data/basic.obo",
+                   help="Path to uberon/basic.obo "
+                        "(download: wget http://purl.obolibrary.org/obo/uberon/basic.obo). "
+                        "Default: data/basic.obo")
 
     # -- Output ------------------------------------------------------------
     p.add_argument("--tsv-out",   default="graph_tsv/")
@@ -191,12 +226,15 @@ def parse_args() -> argparse.Namespace:
                    help="Which graph(s) to build (default: both)")
 
     # -- Behaviour flags ---------------------------------------------------
-    p.add_argument("--all-mappings", action="store_true",
-                   help="Keep all HP->MP mappings instead of best-ranked only")
+    p.add_argument("--include-mortality", action="store_true",
+                   help="Keep MP:0010768 (mortality/aging) in the HP→MP mapping "
+                        "(excluded by default following Barbitoff et al. 2025)")
     p.add_argument("--skip-export",  action="store_true",
                    help="Skip all TSV export steps (TSVs must already exist)")
     p.add_argument("--skip-layers", nargs="*", default=[],
-                   help="Layer names to skip, e.g. --skip-layers go")
+                   help="Layer names to skip, e.g. --skip-layers go expression")
+    p.add_argument("--allow-missing-layers", action="store_true",
+                   help="Warn instead of failing when a layer's TSV files are missing")
     p.add_argument("--clean-tsv", action="store_true",
                    help="Delete and recreate --tsv-out before exporting")
     p.add_argument("--clean-graph", action="store_true",
@@ -210,6 +248,11 @@ def main() -> None:
     tsv_out = Path(args.tsv_out)
     skip_layers = [s.lower() for s in args.skip_layers]
 
+    # Initialise logging before any export step so their logger.* calls
+    # reach the file handler.  build() also calls setup_logging() but that
+    # runs after all exports — too late.  setup_logging() is idempotent.
+    setup_logging(out_dir=Path(args.graph_out))
+
     if args.skip_export:
         print("Skipping all TSV exports (--skip-export set).\n")
     else:
@@ -221,6 +264,23 @@ def main() -> None:
             shutil.rmtree(tsv_out)
         tsv_out.mkdir(parents=True, exist_ok=True)
 
+        # -- Step 0: HP→MP system-level mapping (human only) ---------------
+        # Produces edge_hp_to_mp_top.tsv and node_mp_top_names.tsv, which
+        # are consumed by Step 1. Always runs when the human branch is active
+        # because the mapping is a prerequisite for phenotype edge export.
+        if args.species in ("human", "both"):
+            print("=" * 60)
+            print("Step 0 -- HP→MP system-level mapping")
+            print("=" * 60)
+            run_mapping(
+                genes_to_phenotype_path=args.genes_to_phenotype,
+                hp2mp_path=args.hp2mp,
+                data_dir=args.data_dir,
+                out_dir=tsv_out,
+                exclude_mortality=not args.include_mortality,
+            )
+            print(f"-> {tsv_out.resolve()}\n")
+
         # -- Step 1: phenotype edges (HPO + MGD) ---------------------------
         # HPO is human-only; MGD is mouse-only — pass species so the
         # pipeline skips whichever half is not needed.
@@ -230,12 +290,11 @@ def main() -> None:
         run_phenotype_pipeline(
             genes_to_phenotype_path=args.genes_to_phenotype,
             mgi_path=args.mgi,
-            sssom_path=args.sssom,
             data_dir=args.data_dir,
+            mapping_dir=tsv_out,
             gene_info_path=args.gene_info,
             out_dir=tsv_out,
-            best_only=not args.all_mappings,
-            species=args.species,  # ← new: skip human/mouse halves when not needed
+            species=args.species,
         )
         print(f"-> {tsv_out.resolve()}\n")
 
@@ -247,7 +306,6 @@ def main() -> None:
             run_go_pipeline(
                 gene2go_path=args.gene2go,
                 genes_to_phenotype_path=args.genes_to_phenotype,
-                data_dir=args.data_dir,
                 out_dir=tsv_out,
             )
             print(f"-> {tsv_out.resolve()}\n")
@@ -260,12 +318,11 @@ def main() -> None:
             run_mouse_go_pipeline(
                 gene2go_path=args.gene2go,
                 gene_info_path=args.gene_info,
-                data_dir=args.data_dir,
                 out_dir=tsv_out,
             )
             print(f"-> {tsv_out.resolve()}\n")
 
-        # -- Step 4: GTEx expression edges — human only ----------------
+        # -- Step 4: GTEx expression edges — human only --------------------
         if "expression" not in skip_layers and args.species in ("human", "both"):
             print("=" * 60)
             print("Step 4 -- GTEx expression edges, human")
@@ -274,6 +331,34 @@ def main() -> None:
                 gtex_path=args.gtex,
                 out_dir=tsv_out,
                 tpm_threshold=args.tpm_threshold,
+            )
+            print(f"-> {tsv_out.resolve()}\n")
+
+        # -- Step 5: BioGRID PPI edges — human only -----------------------
+        if "ppi" not in skip_layers and args.species in ("human", "both"):
+            print("=" * 60)
+            print("Step 5 -- BioGRID protein-protein interactions, human")
+            print("=" * 60)
+            run_ppi_pipeline(
+                biogrid_path=args.biogrid,
+                out_dir=tsv_out,
+            )
+            print(f"-> {tsv_out.resolve()}\n")
+
+        # -- Step 6: Uberon anatomical ontology — human only --------------
+        # Requires: curated GTEX_TO_UBERON mapping (always built-in).
+        # Optional: --uberon-obo basic.obo populates name/definition/synonyms.
+        # Uses the expression TSV produced in Step 4 to restrict output to
+        # tissues that actually appear in the expression layer.
+        if "uberon" not in skip_layers and args.species in ("human", "both"):
+            print("=" * 60)
+            print("Step 6 -- Uberon anatomical ontology, human")
+            print("=" * 60)
+            expression_tsv = tsv_out / "edge_human_gene_expressed_in_tissue.tsv"
+            run_uberon_pipeline(
+                out_dir=tsv_out,
+                uberon_obo_path=args.uberon_obo,
+                expression_tsv=expression_tsv if expression_tsv.exists() else None,
             )
             print(f"-> {tsv_out.resolve()}\n")
 
@@ -292,6 +377,7 @@ def main() -> None:
         schema_config_path=args.schema_config,
         biocypher_config_path=args.biocypher_config,
         skip_layers=skip_layers,
+        allow_missing_layers=args.allow_missing_layers,
     )
 
 
