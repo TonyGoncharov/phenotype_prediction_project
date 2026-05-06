@@ -34,10 +34,13 @@ Outputs (written to out_dir)
 
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_TPM_THRESHOLD = 5.0
 
@@ -78,10 +81,10 @@ def read_gtex_gct(path: str | Path) -> pd.DataFrame:
             "  (GTEx_Analysis_v*_gene_median_tpm.gct.gz)"
         )
 
+    logger.debug("Parsing GCT file: %s", path)
     # skiprows=2 skips the "#1.2" line and the dimensions line
     df = pd.read_csv(path, sep="\t", skiprows=2, dtype=str)
 
-    # The first two columns are always Name (Ensembl) and Description (symbol)
     if _GCT_ID_COL not in df.columns or _GCT_SYM_COL not in df.columns:
         raise ValueError(
             f"Unexpected GCT format — expected columns '{_GCT_ID_COL}' and "
@@ -91,6 +94,7 @@ def read_gtex_gct(path: str | Path) -> pd.DataFrame:
     tissue_cols = [c for c in df.columns if c not in (_GCT_ID_COL, _GCT_SYM_COL)]
     if not tissue_cols:
         raise ValueError("No tissue columns found in GCT file.")
+    logger.debug("GCT: %d gene rows, %d tissue columns", len(df), len(tissue_cols))
 
     # Wide → long
     df_long = df.melt(
@@ -101,8 +105,12 @@ def read_gtex_gct(path: str | Path) -> pd.DataFrame:
     )
     df_long = df_long.rename(columns={_GCT_SYM_COL: "gene_symbol"})
 
+    before = len(df_long)
     df_long["median_tpm"] = pd.to_numeric(df_long["median_tpm"], errors="coerce")
     df_long = df_long.dropna(subset=["gene_symbol", "tissue_name", "median_tpm"])
+    dropped = before - len(df_long)
+    if dropped:
+        logger.warning("Dropped %d rows with missing/non-numeric TPM values", dropped)
 
     return df_long[["gene_symbol", "tissue_name", "median_tpm"]]
 
@@ -118,39 +126,32 @@ def run_expression_pipeline(
 
     Filters gene-tissue pairs to those with median TPM >= *tpm_threshold*,
     writes edge and node TSVs, and returns both DataFrames.
-
-    Parameters
-    ----------
-    gtex_path:
-        Path to the GTEx GCT file (plain or gzip).
-    out_dir:
-        Directory to write output TSVs.
-    tpm_threshold:
-        Minimum median TPM to include a gene-tissue edge (default 5.0).
-
-    Outputs
-    -------
-    edge_human_gene_expressed_in_tissue.tsv
-    node_tissue_gtex.tsv
-    qc_expression_unexpressed_genes.tsv
     """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"Reading GTEx GCT file: {gtex_path}")
+    logger.info("Starting GTEx expression pipeline")
+    logger.info("GTEx file     : %s", gtex_path)
+    logger.info("Output dir    : %s", out_dir)
+    logger.info("TPM threshold : %.1f", tpm_threshold)
+
     expr = read_gtex_gct(gtex_path)
 
     all_symbols = set(expr["gene_symbol"].dropna().unique())
-    print(f"Genes in GTEx          : {len(all_symbols)}")
-    print(f"Tissues in GTEx        : {expr['tissue_name'].nunique()}")
+    logger.info("Genes in GTEx   : %d", len(all_symbols))
+    logger.info("Tissues in GTEx : %d", expr["tissue_name"].nunique())
 
     # ── Filter by threshold ───────────────────────────────────────── #
     expressed = expr[expr["median_tpm"] >= tpm_threshold].copy()
     expressed["tissue_id"] = expressed["tissue_name"].map(_tissue_id)
 
-    # Reorder columns for readability
-    edge_df = expressed[["gene_symbol", "tissue_id", "tissue_name", "median_tpm"]]
+    edge_df = (
+        expressed
+        .groupby(["gene_symbol", "tissue_id", "tissue_name"], as_index=False)
+        ["median_tpm"].max()
+    )
     edge_df.to_csv(out_dir / "edge_human_gene_expressed_in_tissue.tsv", sep="\t", index=False)
+    logger.debug("Written: edge_human_gene_expressed_in_tissue.tsv")
 
     # ── Tissue node table ─────────────────────────────────────────── #
     tissue_df = (
@@ -160,6 +161,7 @@ def run_expression_pipeline(
         .reset_index(drop=True)
     )
     tissue_df.to_csv(out_dir / "node_tissue_gtex.tsv", sep="\t", index=False)
+    logger.debug("Written: node_tissue_gtex.tsv")
 
     # ── QC: genes with no tissue above threshold ──────────────────── #
     expressed_symbols = set(edge_df["gene_symbol"].dropna())
@@ -168,17 +170,19 @@ def run_expression_pipeline(
         out_dir / "qc_expression_unexpressed_genes.tsv", sep="\t", index=False
     )
 
-    print(f"Gene→tissue edges      : {len(edge_df)}")
-    print(f"Unique genes expressed : {edge_df['gene_symbol'].nunique()}")
-    print(f"Unique tissues         : {edge_df['tissue_id'].nunique()}")
-    print(f"TPM threshold          : {tpm_threshold}")
-    print(f"Genes below threshold  : {len(unexpressed)}")
+    logger.info("Gene→tissue edges      : %d", len(edge_df))
+    logger.info("Unique genes expressed : %d", edge_df["gene_symbol"].nunique())
+    logger.info("Unique tissues         : %d", edge_df["tissue_id"].nunique())
+    logger.info("Genes below threshold  : %d", len(unexpressed))
+    if unexpressed:
+        logger.debug("Unexpressed genes written to: qc_expression_unexpressed_genes.tsv")
 
     return {"edges": edge_df, "tissues": tissue_df}
 
 
 if __name__ == "__main__":
     import argparse
+    from src.utils.logging_config import setup_logging
 
     p = argparse.ArgumentParser(description="Export GTEx gene-expression edges.")
     p.add_argument("--gtex",          required=True, help="GTEx GCT file (.gct or .gct.gz)")
@@ -187,6 +191,7 @@ if __name__ == "__main__":
                    help=f"Minimum median TPM to include an edge (default {DEFAULT_TPM_THRESHOLD})")
     args = p.parse_args()
 
+    setup_logging(out_dir=args.out)
     run_expression_pipeline(
         gtex_path=args.gtex,
         out_dir=args.out,
