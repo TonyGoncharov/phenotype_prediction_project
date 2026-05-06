@@ -11,14 +11,23 @@ Adding a new layer
 from __future__ import annotations
 
 import argparse
+import itertools
+import logging
+import time
 from pathlib import Path
 from typing import Literal
 
 import biocypher
 
+from src.adapters.base import BaseAdapter
 from src.adapters.gene_to_phenotype_adapter import HumanPhenotypeAdapter, MousePhenotypeAdapter
 from src.adapters.gene_ontology_adapter import HumanGOAdapter, MouseGOAdapter
 from src.adapters.gene_expression_adapter import HumanExpressionAdapter
+from src.adapters.ppi_adapter import HumanPPIAdapter
+from src.adapters.uberon_adapter import HumanUberonAdapter, MouseUberonAdapter
+from src.utils.logging_config import setup_logging
+
+logger = logging.getLogger(__name__)
 
 Species = Literal["human", "mouse", "both"]
 
@@ -31,11 +40,14 @@ SPECIES_LAYERS: dict[str, list] = {
     "human": [
         HumanPhenotypeAdapter,
         HumanGOAdapter,
-        HumanExpressionAdapter
+        HumanExpressionAdapter,
+        HumanPPIAdapter,
+        HumanUberonAdapter,
     ],
     "mouse": [
         MousePhenotypeAdapter,
         MouseGOAdapter,
+        MouseUberonAdapter,
         # MouseExpressionAdapter,
     ],
 }
@@ -72,10 +84,11 @@ def build_species(
     if not schema.exists():
         raise FileNotFoundError(f"Schema config not found: {schema}")
 
-    print(f"\n{'=' * 60}")
-    print(f"  Building {species.upper()} graph  →  {out_dir}")
-    print(f"  Schema : {schema}")
-    print(f"{'=' * 60}")
+    logger.info("=" * 60)
+    logger.info("Building %s graph  →  %s", species.upper(), out_dir)
+    logger.info("Schema : %s", schema)
+    logger.info("Data   : %s", data_dir)
+    logger.info("=" * 60)
 
     bc = biocypher.BioCypher(
         schema_config_path=str(schema),
@@ -83,18 +96,22 @@ def build_species(
         output_directory=str(out_dir),
     )
 
+    # ── Initialise adapters ──────────────────────────────────────────
     active_adapters: list[tuple[str, object]] = []
     for LayerCls in SPECIES_LAYERS[species]:
         name = _layer_name(LayerCls)
         if name in skip_layers:
-            print(f"  Skipping layer : {name}")
+            logger.info("Skipping layer: %s", name)
             continue
+        logger.debug("Initialising layer: %s (%s)", name, LayerCls.__name__)
         try:
             active_adapters.append((name, LayerCls(data_dir)))
+            logger.info("Layer ready: %s", name)
         except FileNotFoundError as exc:
             if allow_missing_layers:
-                print(f"  WARNING: skipping layer '{name}' — {exc}")
+                logger.warning("Layer '%s' skipped — %s", name, exc)
             else:
+                logger.error("Layer '%s' failed to initialise: %s", name, exc)
                 raise RuntimeError(
                     f"\nLayer '{name}' failed to initialise:\n  {exc}\n\n"
                     "This usually means an export step did not run or wrote to\n"
@@ -103,28 +120,37 @@ def build_species(
                 ) from exc
 
     if not active_adapters:
-        print("  No active adapters — nothing to write.")
+        logger.warning("No active adapters for species '%s' — nothing to write.", species)
         return
 
     layer_names = ", ".join(name for name, _ in active_adapters)
-    print(f"  Layers : {layer_names}")
+    logger.info("Active layers: %s", layer_names)
 
+    # ── Node writing ─────────────────────────────────────────────────
     def _all_nodes():
-        for _, adapter in active_adapters:
-            yield from adapter.get_nodes()
+        all_gen = itertools.chain.from_iterable(
+            adapter.get_nodes() for _, adapter in active_adapters
+        )
+        yield from BaseAdapter._unique_nodes(all_gen)
 
+    logger.info("Writing nodes...")
+    t0 = time.perf_counter()
+    bc.write_nodes(_all_nodes())
+    logger.info("Nodes written in %.1fs", time.perf_counter() - t0)
+
+    # ── Edge writing ─────────────────────────────────────────────────
     def _all_edges():
-        for _, adapter in active_adapters:
+        for name, adapter in active_adapters:
+            logger.debug("Collecting edges from layer: %s", name)
             yield from adapter.get_edges()
 
-    print("Writing nodes...")
-    bc.write_nodes(_all_nodes())
-
-    print("Writing edges...")
+    logger.info("Writing edges...")
+    t0 = time.perf_counter()
     bc.write_edges(_all_edges())
+    logger.info("Edges written in %.1fs", time.perf_counter() - t0)
 
     bc.write_import_call()
-    print(f"Done → {bc._output_directory}")
+    logger.info("Done → %s", bc._output_directory)
 
 
 def build(
@@ -147,8 +173,17 @@ def build(
     schema_path = Path(schema_config_path) if schema_config_path else None
     bc_config   = Path(biocypher_config_path) if biocypher_config_path else None
 
+    # Logging is initialised here, at the top of the pipeline, so the
+    # log file lands next to all other outputs.
+    setup_logging(out_dir=out_dir)
+    logger.info("Pipeline started — species=%s, data_dir=%s, out_dir=%s",
+                species, data_dir, out_dir)
+    if skip_layers:
+        logger.info("Skipping layers: %s", skip_layers)
+
     targets = ["human", "mouse"] if species == "both" else [species]
 
+    t_total = time.perf_counter()
     for sp in targets:
         sp_out = out_dir / sp if species == "both" else out_dir
         build_species(
@@ -160,6 +195,8 @@ def build(
             skip_layers=skip_layers,
             allow_missing_layers=allow_missing_layers,
         )
+
+    logger.info("Pipeline complete — total time: %.1fs", time.perf_counter() - t_total)
 
 
 if __name__ == "__main__":
