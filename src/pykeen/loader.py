@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from pathlib import Path
 from typing import Optional
@@ -180,11 +182,33 @@ def load_triples(
     return combined
 
 
+def _tf_cache_key(
+    include_relations: Optional[set[str]],
+    create_inverse_triples: bool,
+) -> str:
+    """Short deterministic key encoding the loader parameters."""
+    payload = json.dumps(
+        {"rels": sorted(include_relations) if include_relations else None,
+         "inv": create_inverse_triples},
+        sort_keys=True,
+    )
+    return hashlib.md5(payload.encode()).hexdigest()[:10]
+
+
+def _cache_is_fresh(cache_path: Path, source_dir: Path) -> bool:
+    """True if *cache_path* exists and is newer than every CSV in *source_dir*."""
+    if not cache_path.exists():
+        return False
+    cache_mtime = cache_path.stat().st_mtime
+    return all(f.stat().st_mtime <= cache_mtime for f in source_dir.glob("*.csv"))
+
+
 def build_triples_factory(
     bc_dir: str | Path,
     include_relations: Optional[set[str]] = None,
     create_inverse_triples: bool = False,
     sep: str = CSV_SEP,
+    cache_dir: Optional[str | Path] = None,
 ) -> TriplesFactory:
     """Build a PyKEEN TriplesFactory from a BioCypher output directory.
 
@@ -196,11 +220,32 @@ def build_triples_factory(
                                every triple — can improve tail prediction quality
                                at the cost of doubling the triple count.
     sep                      : CSV separator
+    cache_dir                : if given, cache the TriplesFactory here as a binary
+                               file and reload it on subsequent calls with the same
+                               parameters.  Invalidated automatically when any
+                               source CSV is newer than the cache.
 
     Returns
     -------
     TriplesFactory ready to be split and fed to PyKEEN models.
     """
+    bc_dir = Path(bc_dir)
+
+    if cache_dir is not None:
+        cache_dir = Path(cache_dir)
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        key = _tf_cache_key(include_relations, create_inverse_triples)
+        cache_path = cache_dir / f"tf_{key}"
+        if _cache_is_fresh(cache_path, bc_dir):
+            logger.info("Loading TriplesFactory from cache: %s", cache_path)
+            tf = TriplesFactory.from_path_binary(cache_path)
+            logger.info(
+                "TriplesFactory ready (cached) — %d entities | %d relations | %d triples",
+                tf.num_entities, tf.num_relations, tf.num_triples,
+            )
+            return tf
+        logger.info("Cache miss (key=%s) — building from CSV files", key)
+
     triples = load_triples(bc_dir, include_relations=include_relations, sep=sep)
 
     tf = TriplesFactory.from_labeled_triples(
@@ -214,6 +259,10 @@ def build_triples_factory(
         tf.num_relations,
         tf.num_triples,
     )
+
+    if cache_dir is not None:
+        tf.to_path_binary(cache_path)
+        logger.info("TriplesFactory cached to: %s", cache_path)
 
     # Sanity check: warn if the primary prediction relation is missing
     if GENE_PHENOTYPE_RELATION not in tf.relation_to_id:
