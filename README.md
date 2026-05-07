@@ -50,13 +50,13 @@ uv sync
 A helper script fetches all required files into `data/`:
 
 ```bash
-bash src/utils/download_data.sh
+bash scripts/download_data.sh
 ```
 
 To verify everything is in place:
 
 ```bash
-bash src/utils/check_data.sh
+bash scripts/check_data.sh
 ```
 
 ## Usage
@@ -155,9 +155,11 @@ uv run python run.py --help
 │   │   ├── gene_to_phenotype_export.py  # HPO/MGI → TSV export
 │   │   └── gene_ontology_export.py      # gene2go → TSV export
 │   └── utils/
-│       ├── gene_info.py            # NCBI gene_info parser
-│       ├── check_data.sh           # Validate data files
-│       └── download_data.sh        # Fetch all data files
+│       └── gene_info.py            # NCBI gene_info parser
+├── scripts/
+│   ├── check_data.sh               # Validate data files
+│   ├── clear_dirs.sh               # Delete generated output directories
+│   └── download_data.sh            # Fetch all data files
 ├── pyproject.toml                  # Project metadata and dependencies
 ├── uv.lock                         # Pinned dependency versions
 ├── data/                           # Input data (not in git, fetched by download_data.sh)
