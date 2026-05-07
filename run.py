@@ -212,8 +212,8 @@ def parse_args() -> argparse.Namespace:
     # -- Output ------------------------------------------------------------
     p.add_argument("--tsv-out",   default="graph_tsv/")
     p.add_argument("--graph-out", default="biocypher_out/",
-                   help="Root output dir. Subdirs human/ and mouse/ are created "
-                        "automatically when --species both.")
+                   help="Root output dir. Subdirs human/ and mouse/ are always created "
+                        "(e.g. biocypher_out/human/ for --species human).")
 
     # -- BioCypher config --------------------------------------------------
     p.add_argument("--schema-config",    default=None,
