@@ -55,17 +55,17 @@ logger = logging.getLogger(__name__)
 GTEX_TO_UBERON: dict[str, str] = {
     # ── Brain regions ────────────────────────────────────────────────── #
     "GTEX:Brain_Amygdala":                          "UBERON:0001876",
-    "GTEX:Brain_Anterior_cingulate_cortex_(BA24)":  "UBERON:0006101",
-    "GTEX:Brain_Caudate_(basal_ganglia)":           "UBERON:0001873",
+    "GTEX:Brain_Anterior_cingulate_cortex_BA24":    "UBERON:0006101",
+    "GTEX:Brain_Caudate_basal_ganglia":             "UBERON:0001873",
     "GTEX:Brain_Cerebellar_Hemisphere":             "UBERON:0002037",
     "GTEX:Brain_Cerebellum":                        "UBERON:0002037",
     "GTEX:Brain_Cortex":                            "UBERON:0001851",
-    "GTEX:Brain_Frontal_Cortex_(BA9)":              "UBERON:0001870",
+    "GTEX:Brain_Frontal_Cortex_BA9":                "UBERON:0001870",
     "GTEX:Brain_Hippocampus":                       "UBERON:0002310",
     "GTEX:Brain_Hypothalamus":                      "UBERON:0001898",
-    "GTEX:Brain_Nucleus_accumbens_(basal_ganglia)": "UBERON:0001882",
-    "GTEX:Brain_Putamen_(basal_ganglia)":           "UBERON:0001874",
-    "GTEX:Brain_Spinal_cord_(cervical_c1)":         "UBERON:0002726",
+    "GTEX:Brain_Nucleus_accumbens_basal_ganglia":   "UBERON:0001882",
+    "GTEX:Brain_Putamen_basal_ganglia":             "UBERON:0001874",
+    "GTEX:Brain_Spinal_cord_cervical_c_1":          "UBERON:0002726",
     "GTEX:Brain_Substantia_nigra":                  "UBERON:0002038",
     # ── Heart ────────────────────────────────────────────────────────── #
     "GTEX:Heart_Atrial_Appendage":                  "UBERON:0006618",
@@ -100,8 +100,8 @@ GTEX_TO_UBERON: dict[str, str] = {
     "GTEX:Muscle_Skeletal":                         "UBERON:0001134",
     "GTEX:Minor_Salivary_Gland":                    "UBERON:0006330",
     # ── Skin ─────────────────────────────────────────────────────────── #
-    "GTEX:Skin_Not_Sun_Exposed_(Suprapubic)":       "UBERON:0000014",
-    "GTEX:Skin_Sun_Exposed_(Lower_leg)":            "UBERON:0000014",
+    "GTEX:Skin_Not_Sun_Exposed_Suprapubic":         "UBERON:0000014",
+    "GTEX:Skin_Sun_Exposed_Lower_leg":              "UBERON:0000014",
     # ── Nerve ────────────────────────────────────────────────────────── #
     "GTEX:Nerve_Tibial":                            "UBERON:0001323",
     # ── Blood / Immune ───────────────────────────────────────────────── #
@@ -113,11 +113,11 @@ GTEX_TO_UBERON: dict[str, str] = {
     "GTEX:Bladder":                                 "UBERON:0001255",
     # ── Adipose / connective tissue ──────────────────────────────────── #
     "GTEX:Adipose_Subcutaneous":                    "UBERON:0002190",
-    "GTEX:Adipose_Visceral_(Omentum)":              "UBERON:0003688",
+    "GTEX:Adipose_Visceral_Omentum":                "UBERON:0003688",
     # ── Other ────────────────────────────────────────────────────────── #
     "GTEX:Breast_Mammary_Tissue":                   "UBERON:0001911",
     "GTEX:Cells_Cultured_fibroblasts":              "UBERON:0002082",
-    "GTEX:Cells_EBV-transformed_lymphocytes":       "UBERON:0000029",
+    "GTEX:Cells_EBV_transformed_lymphocytes":       "UBERON:0000029",
     "GTEX:Cervix_Ectocervix":                       "UBERON:0012249",
     "GTEX:Cervix_Endocervix":                       "UBERON:0000458",
     "GTEX:Fallopian_Tube":                          "UBERON:0003889",
