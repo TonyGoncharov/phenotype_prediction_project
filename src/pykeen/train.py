@@ -295,7 +295,7 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument(
         "--data-dir", required=True,
         help="BioCypher output dir that contains *-header.csv and *-part000.csv files "
-             "(e.g. biocypher_out/).",
+             "(e.g. biocypher_out/human/).",
     )
     p.add_argument(
         "--out-dir", default="pykeen_out/rotate",
