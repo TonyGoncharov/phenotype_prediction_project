@@ -1,10 +1,11 @@
-# biocypher_config.yaml
-
 biocypher:
   offline: true
   debug: false
-  # schema_config_path is supplied per species by src/build_graph.py — no default here
   cache_directory: .cache
+
+  head_ontology:
+    url: data/biolink-model.owl.ttl
+    root_node: entity
 
 neo4j:
   delimiter: '\t'
@@ -13,4 +14,4 @@ neo4j:
   skip_bad_relationships: true
   node_labels_order: Ascending
   edge_labels_order: Leaves
-  import_call_bin_prefix: /opt/homebrew/bin/
+  # import_call_bin_prefix: /opt/homebrew/bin/   ← убрать
