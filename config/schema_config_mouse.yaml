@@ -44,6 +44,21 @@ go term:
     namespace: str
     name: str
 
+# Uberon anatomical terms — IDs use UBERON: prefix (e.g. UBERON:0002048).
+# is_a: gross anatomical structure anchors Uberon in the Biolink anatomy hierarchy.
+# Note: Mouse expression layer is not yet implemented; this node type is registered
+# for forward-compatibility once mouse tissue data becomes available.
+uberon term:
+  represented_as: node
+  preferred_id: uberon
+  label_in_input: uberon term
+  is_a: gross anatomical structure
+  properties:
+    uberon_id:  str
+    name:       str
+    definition: str
+    synonyms:   str[]
+
 
 # ═══════════════════════════════════════════════════════════════════
 #  Edges
@@ -65,3 +80,14 @@ mouse gene has go term:
   properties:
     evidence_codes: str[]
     aspect: str
+
+# Uberon: GTEx tissue → Uberon anatomical term.
+# Will yield edges once mouse tissue/expression data is added.
+tissue mapped to uberon:
+  represented_as: edge
+  label_in_input: tissue mapped to uberon
+  is_a: association
+  source: tissue
+  target: uberon term
+  properties:
+    gtex_tissue_name: str
