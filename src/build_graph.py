@@ -173,8 +173,6 @@ def build(
     schema_path = Path(schema_config_path) if schema_config_path else None
     bc_config   = Path(biocypher_config_path) if biocypher_config_path else None
 
-    # Logging is initialised here, at the top of the pipeline, so the
-    # log file lands next to all other outputs.
     setup_logging(out_dir=out_dir)
     logger.info("Pipeline started — species=%s, data_dir=%s, out_dir=%s",
                 species, data_dir, out_dir)
