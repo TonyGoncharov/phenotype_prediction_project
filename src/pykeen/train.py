@@ -62,15 +62,21 @@ def run_training(
     out_dir:   str | Path,
     config:    dict | None = None,
     device:    str = "auto",
+    cache_dir: str | Path | None = None,
 ) -> dict:
     """Full RotatE training + evaluation run.
 
     Parameters
     ----------
-    data_dir : path to biocypher_out/human/ (BioCypher CSV output)
-    out_dir  : where to write model, checkpoints, logs, and summary
-    config   : dict of hyperparameter overrides (merged with DEFAULT_CONFIG)
-    device   : 'cpu', 'cuda', 'mps', or 'auto' (auto-detects GPU)
+    data_dir  : path to biocypher_out/human/ (BioCypher CSV output)
+    out_dir   : where to write model, checkpoints, logs, and summary
+    config    : dict of hyperparameter overrides (merged with DEFAULT_CONFIG)
+    device    : 'cpu', 'cuda', 'mps', or 'auto' (auto-detects GPU)
+    cache_dir : directory for caching the TriplesFactory binary.  On the first
+                run the factory is built from CSV and saved here; subsequent runs
+                load it directly, skipping the CSV parsing step entirely.
+                The cache is invalidated automatically when any source CSV is
+                newer than the cached file.
 
     Returns
     -------
@@ -78,6 +84,7 @@ def run_training(
     Also written to <out_dir>/summary.json.
     """
     cfg = {**DEFAULT_CONFIG, **(config or {})}
+    include_relations = cfg.pop("include_relations", None)
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -86,7 +93,11 @@ def run_training(
     logger.info("Step 1/3 — Loading triples from %s", data_dir)
     logger.info("=" * 60)
 
-    tf = build_triples_factory(data_dir)
+    tf = build_triples_factory(
+        data_dir,
+        include_relations=include_relations,
+        cache_dir=cache_dir,
+    )
     train_tf, val_tf, test_tf = split_triples_factory(
         tf,
         train_frac=cfg["train_frac"],
@@ -305,6 +316,12 @@ def _parse_args() -> argparse.Namespace:
         help="Smoke-test preset: dim=64, epochs=20, negs=32, batch=1024. "
              "Completes in ~10 min on CPU. Verify the pipeline before a full run.",
     )
+    p.add_argument(
+        "--cache-dir", default=None,
+        help="Directory for caching the TriplesFactory binary. "
+             "Skips CSV parsing on subsequent runs with the same data. "
+             "Cache is invalidated automatically when source CSVs change.",
+    )
     return p.parse_args()
 
 
@@ -338,4 +355,5 @@ if __name__ == "__main__":
         out_dir=args.out_dir,
         config=override,
         device=args.device,
+        cache_dir=args.cache_dir,
     )
