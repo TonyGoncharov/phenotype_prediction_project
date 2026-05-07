@@ -164,8 +164,8 @@ def build(
 ) -> None:
     """Build one or both species graphs.
 
-    When species='both', output goes to <out_dir>/human/ and <out_dir>/mouse/
-    so the two graphs don't collide.
+    Output always goes to <out_dir>/<species>/ (e.g. biocypher_out/human/).
+    This is consistent regardless of whether species='both' or a single species.
     """
     data_dir    = Path(data_dir)
     out_dir     = Path(out_dir)
@@ -183,7 +183,7 @@ def build(
 
     t_total = time.perf_counter()
     for sp in targets:
-        sp_out = out_dir / sp if species == "both" else out_dir
+        sp_out = out_dir / sp
         build_species(
             species=sp,
             data_dir=data_dir,
