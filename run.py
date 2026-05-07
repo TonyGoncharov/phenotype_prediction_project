@@ -251,7 +251,9 @@ def main() -> None:
     # Initialise logging before any export step so their logger.* calls
     # reach the file handler.  build() also calls setup_logging() but that
     # runs after all exports — too late.  setup_logging() is idempotent.
-    setup_logging(out_dir=Path(args.graph_out))
+    # pipeline.log goes to biocypher-log/ (not biocypher_out/) so it survives
+    # --clean-graph which deletes biocypher_out/ after this call.
+    setup_logging(out_dir=Path("biocypher-log"))
 
     if args.skip_export:
         print("Skipping all TSV exports (--skip-export set).\n")
