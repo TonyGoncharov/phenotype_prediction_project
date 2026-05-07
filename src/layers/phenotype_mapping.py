@@ -35,7 +35,7 @@ def load_hp_ontology(data_dir: Path):
     if not hp_path.exists():
         raise FileNotFoundError(hp_path)
     logger.debug("Loading HP ontology from %s", hp_path)
-    return Ontology(str(hp_path))
+    return Ontology(str(hp_path), encoding="utf-8")
 
 
 def load_hp2mp(hp2mp_path: Path, exclude_mortality: bool = True) -> dict[str, list[str]]:
@@ -194,7 +194,7 @@ def run_mapping(
     if mp_obo_path.exists():
         from pronto import Ontology
         logger.debug("Loading MP ontology for term names from %s", mp_obo_path)
-        mp_ont = Ontology(str(mp_obo_path))
+        mp_ont = Ontology(str(mp_obo_path), encoding="utf-8")
         mp_top_ids = sorted(hp_to_mp_top["mp_top_id"].dropna().unique()) if not hp_to_mp_top.empty else []
         names_rows = [
             {"mp_id": mp_id, "name": (mp_ont[mp_id].name or "") if mp_id in mp_ont else ""}
