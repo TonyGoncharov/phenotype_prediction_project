@@ -1,55 +1,55 @@
 """benchmark_threads.py — find the optimal OMP_NUM_THREADS for RotatE on this server.
 
-Runs a short fixed-epoch training loop for each thread count, measures wall-clock
-time, and saves a two-panel PNG chart.
+Each thread count is tested in a **separate subprocess** so that OMP_NUM_THREADS
+is set before any PyTorch / OpenMP import.  This is the only correct way:
+torch.set_num_threads() cannot change the OpenMP thread pool after first import.
 
 Usage
 -----
-    uv run python -m src.pykeen.benchmark_threads \\
-        --data-dir biocypher_out/ \\
-        --cache-dir .cache/triples \\
+    python benchmark_threads.py \\
+        --data-dir biocypher_out/human/ \\
         --out benchmark_threads.png
 
-Note: torch.set_num_threads() controls PyTorch's intraop thread pool at runtime.
-For OpenMP-backed ops, OMP_NUM_THREADS must be set before the first torch import.
-To benchmark that layer too, wrap this script:
-    for T in 1 4 8 16 32 64; do
-        OMP_NUM_THREADS=$T uv run python -m src.pykeen.benchmark_threads ...
-    done
+    # Test only specific counts (faster):
+    python benchmark_threads.py \\
+        --data-dir biocypher_out/human/ \\
+        --threads 8 16 32 64 128 \\
+        --out benchmark_threads.png
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
+import shutil
+import subprocess
+import sys
+import tempfile
 import time
 from pathlib import Path
 
 import matplotlib
-matplotlib.use("Agg")  # no display needed on a server
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
-import torch
 
-from src.pykeen.train import run_training
+logger = logging.getLogger(__name__)
 
-# ── Benchmark config ──────────────────────────────────────────────────────────
-# Enough epochs to get a stable time signal; small enough to finish quickly.
-_BENCH_CONFIG = {
-    "num_epochs":        5,
-    "embedding_dim":     64,
-    "batch_size":        1024,
-    "num_negs_per_pos":  32,
-    "checkpoint_frequency": 0,   # no checkpoints — pure training time
-    "eval_batch_size":   512,
-}
+# ── Benchmark training config ─────────────────────────────────────────────────
+# 5 epochs is enough to measure throughput; small enough to finish in minutes.
+_BENCH_EPOCHS   = 5
+_BENCH_DIM      = 64
+_BENCH_BATCH    = 1024
+_BENCH_NEGS     = 32
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# ── Thread count helpers ──────────────────────────────────────────────────────
 
-def _thread_counts(max_n: int) -> list[int]:
-    """Powers of 2 from 1 up to max_n, always including max_n."""
+def _default_thread_counts() -> list[int]:
+    """Powers of 2 from 1 up to os.cpu_count(), always including cpu_count."""
+    max_n = os.cpu_count() or 1
     counts: list[int] = []
     n = 1
     while n <= max_n:
@@ -60,158 +60,195 @@ def _thread_counts(max_n: int) -> list[int]:
     return counts
 
 
-def _silence_training_logs() -> None:
-    """Reduce log noise during benchmark runs — keep only WARNING+."""
-    for name in ("src.pykeen", "pykeen", "kg_pipeline"):
-        logging.getLogger(name).setLevel(logging.WARNING)
+# ── Single subprocess run ─────────────────────────────────────────────────────
+
+def _run_one(
+    n_threads: int,
+    data_dir: Path,
+    out_dir: Path,
+    cache_dir: Path | None,
+) -> float | None:
+    """Launch one training run in a subprocess with OMP_NUM_THREADS=n_threads.
+
+    Returns wall-clock seconds, or None on failure.
+    """
+    env = os.environ.copy()
+    env["OMP_NUM_THREADS"] = str(n_threads)
+    env["MKL_NUM_THREADS"] = str(n_threads)
+
+    cmd = [
+        sys.executable, "-m", "src.pykeen.train",
+        "--data-dir", str(data_dir),
+        "--out-dir",  str(out_dir),
+        "--epochs",   str(_BENCH_EPOCHS),
+        "--dim",      str(_BENCH_DIM),
+        "--batch",    str(_BENCH_BATCH),
+        "--negs",     str(_BENCH_NEGS),
+        "--device",   "cpu",
+    ]
+    if cache_dir is not None:
+        cmd += ["--cache-dir", str(cache_dir)]
+
+    t0 = time.perf_counter()
+    try:
+        result = subprocess.run(
+            cmd,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=3600,
+        )
+    except subprocess.TimeoutExpired:
+        logger.error("Run with threads=%d timed out after 3600s", n_threads)
+        return None
+    elapsed = time.perf_counter() - t0
+
+    if result.returncode != 0:
+        logger.error("Run with threads=%d failed:\n%s", n_threads, result.stdout[-2000:])
+        return None
+
+    return elapsed
 
 
-# ── Benchmark runner ──────────────────────────────────────────────────────────
+# ── Benchmark loop ────────────────────────────────────────────────────────────
 
 def run_benchmark(
-    data_dir: str | Path,
-    cache_dir: str | Path,
+    data_dir: Path,
     thread_counts: list[int],
-    tmp_dir: str | Path,
-    device: str,
+    tmp_root: Path,
+    cache_dir: Path | None = None,
 ) -> dict[int, float]:
-    """Run training for each thread count; return {n_threads: wall_seconds}."""
-    tmp_dir = Path(tmp_dir)
+    """Run one subprocess per thread count; return {n_threads: wall_seconds}."""
     results: dict[int, float] = {}
 
-    n_epochs = _BENCH_CONFIG["num_epochs"]
-    cpu_count = os.cpu_count() or "?"
-    print(f"Server: {cpu_count} logical CPUs  |  device: {device}")
-    print(f"Thread counts to test: {thread_counts}")
-    print(f"Epochs per run: {n_epochs}  (dim=64, batch=1024)")
+    print(f"CPU count : {os.cpu_count()}")
+    print(f"Threads   : {thread_counts}")
+    print(f"Epochs    : {_BENCH_EPOCHS}  dim={_BENCH_DIM}  batch={_BENCH_BATCH}")
+    print(f"Cache dir : {cache_dir or 'disabled (slow — each run re-parses CSV)'}")
     print()
 
-    _silence_training_logs()
-
     for n in thread_counts:
-        torch.set_num_threads(n)
+        out_dir = tmp_root / f"bench_{n}"
+        out_dir.mkdir(parents=True, exist_ok=True)
+
         print(f"  threads={n:4d} ...", end="", flush=True)
-        t0 = time.perf_counter()
-        try:
-            run_training(
-                data_dir=data_dir,
-                out_dir=tmp_dir / f"bench_{n}",
-                config=_BENCH_CONFIG.copy(),
-                device=device,
-                cache_dir=cache_dir,
-            )
-            elapsed = time.perf_counter() - t0
+        elapsed = _run_one(n, data_dir, out_dir, cache_dir)
+
+        if elapsed is None:
+            print("  FAILED")
+        else:
             results[n] = elapsed
             print(f"  {elapsed:6.1f}s")
-        except Exception as exc:
-            print(f"  FAILED — {exc}")
 
     return results
 
 
 # ── Plotting ──────────────────────────────────────────────────────────────────
 
-def plot_results(results: dict[int, float], out_path: str | Path) -> None:
+def plot_results(results: dict[int, float], out_path: Path) -> None:
     if not results:
         print("No results to plot.")
         return
 
-    threads = sorted(results)
-    times   = [results[n] for n in threads]
-    best_n  = min(results, key=results.get)
+    threads  = sorted(results)
+    times    = [results[n] for n in threads]
+    best_n   = min(results, key=results.__getitem__)
     baseline = results[threads[0]]
     speedups = [baseline / results[n] for n in threads]
-    # Ideal linear speedup capped at the max observed speedup
-    ideal = [min(n / threads[0], max(speedups)) for n in threads]
+    ideal    = [min(n / threads[0], max(speedups)) for n in threads]
 
-    fig, (ax_time, ax_speed) = plt.subplots(1, 2, figsize=(13, 5))
+    fig, (ax_t, ax_s) = plt.subplots(1, 2, figsize=(13, 5))
     fig.suptitle(
-        f"Thread benchmark — RotatE  ({_BENCH_CONFIG['num_epochs']} epochs, "
-        f"dim={_BENCH_CONFIG['embedding_dim']})",
+        f"OMP_NUM_THREADS benchmark — RotatE  "
+        f"({_BENCH_EPOCHS} epochs, dim={_BENCH_DIM}, batch={_BENCH_BATCH})",
         fontsize=13, fontweight="bold",
     )
 
-    # ── Left panel: wall time ─────────────────────────────────────────────── #
+    # ── Left: wall time ───────────────────────────────────────────────────── #
     colors = ["#2ecc71" if n == best_n else "#4a90d9" for n in threads]
-    bars = ax_time.bar([str(n) for n in threads], times, color=colors, width=0.6)
+    bars = ax_t.bar([str(n) for n in threads], times, color=colors, width=0.6)
     for bar, t in zip(bars, times):
-        ax_time.text(
+        ax_t.text(
             bar.get_x() + bar.get_width() / 2,
             bar.get_height() + max(times) * 0.01,
             f"{t:.1f}s", ha="center", va="bottom", fontsize=9,
         )
-    ax_time.set_xlabel("OMP_NUM_THREADS", fontsize=11)
-    ax_time.set_ylabel("Wall time (seconds)", fontsize=11)
-    ax_time.set_title("Training time")
-    ax_time.set_ylim(0, max(times) * 1.18)
-    ax_time.legend(handles=[
+    ax_t.set_xlabel("OMP_NUM_THREADS", fontsize=11)
+    ax_t.set_ylabel("Wall time (seconds)", fontsize=11)
+    ax_t.set_title("Training time (lower = faster)")
+    ax_t.set_ylim(0, max(times) * 1.18)
+    ax_t.legend(handles=[
         Patch(facecolor="#2ecc71", label=f"Best: {best_n} threads"),
         Patch(facecolor="#4a90d9", label="Other"),
-    ], loc="upper right", fontsize=9)
-    ax_time.grid(axis="y", alpha=0.25)
+    ], fontsize=9)
+    ax_t.grid(axis="y", alpha=0.25)
 
-    # ── Right panel: speedup ──────────────────────────────────────────────── #
-    ax_speed.plot(
-        [str(n) for n in threads], speedups,
-        "o-", color="#4a90d9", linewidth=2, markersize=7, label="Actual",
-    )
-    ax_speed.plot(
-        [str(n) for n in threads], ideal,
-        "--", color="#bbb", linewidth=1.5, label="Ideal (linear)",
-    )
-    best_idx = threads.index(best_n)
-    ax_speed.axvline(
-        x=best_idx, color="#2ecc71", linestyle=":", linewidth=2, alpha=0.9,
-        label=f"Best: {best_n} threads",
+    # ── Right: speedup ────────────────────────────────────────────────────── #
+    xs = [str(n) for n in threads]
+    ax_s.plot(xs, speedups, "o-", color="#4a90d9", lw=2, ms=7, label="Actual")
+    ax_s.plot(xs, ideal,    "--", color="#bbb",    lw=1.5,      label="Ideal (linear)")
+    ax_s.axvline(
+        x=str(best_n), color="#2ecc71",
+        linestyle=":", lw=2, alpha=0.9, label=f"Best: {best_n} threads",
     )
     for i, (n, s) in enumerate(zip(threads, speedups)):
-        ax_speed.annotate(
+        ax_s.annotate(
             f"{s:.2f}×", xy=(i, s),
             xytext=(0, 8), textcoords="offset points",
             ha="center", fontsize=8,
         )
-    ax_speed.set_xlabel("OMP_NUM_THREADS", fontsize=11)
-    ax_speed.set_ylabel(f"Speedup vs {threads[0]} thread", fontsize=11)
-    ax_speed.set_title("Speedup")
-    ax_speed.set_ylim(bottom=0)
-    ax_speed.legend(fontsize=9)
-    ax_speed.grid(axis="y", alpha=0.25)
+    ax_s.set_xlabel("OMP_NUM_THREADS", fontsize=11)
+    ax_s.set_ylabel(f"Speedup vs {threads[0]} thread(s)", fontsize=11)
+    ax_s.set_title("Speedup")
+    ax_s.set_ylim(bottom=0)
+    ax_s.legend(fontsize=9)
+    ax_s.grid(axis="y", alpha=0.25)
 
     plt.tight_layout()
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(out_path, dpi=150, bbox_inches="tight")
 
-    # ── Print recommendation ──────────────────────────────────────────────── #
-    print(f"\nResults:")
+    # ── Console summary ───────────────────────────────────────────────────── #
+    print("\nResults:")
     for n in threads:
-        marker = " ← best" if n == best_n else ""
-        print(f"  {n:4d} threads: {results[n]:.1f}s{marker}")
+        marker = "  ← best" if n == best_n else ""
+        print(f"  {n:4d} threads:  {results[n]:.1f}s{marker}")
 
     print(f"\nPlot saved: {out_path}")
-    print(f"\nRecommendation: set OMP_NUM_THREADS={best_n}")
-    print(f"  OMP_NUM_THREADS={best_n} uv run python -m src.pykeen.train \\")
-    print(f"      --data-dir biocypher_out/ --cache-dir .cache/triples ...")
+    print(f"\nRecommendation:")
+    print(f"  OMP_NUM_THREADS={best_n} MKL_NUM_THREADS={best_n} \\")
+    print(f"  uv run python -m src.pykeen.train --data-dir biocypher_out/human/ ...")
+
+    # Save raw numbers alongside the chart
+    json_path = out_path.with_suffix(".json")
+    json_path.write_text(json.dumps(
+        {"thread_counts": threads, "wall_seconds": times, "best_n_threads": best_n},
+        indent=2,
+    ))
+    print(f"Raw data  : {json_path}")
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Benchmark OMP_NUM_THREADS for RotatE training.",
+        description="Benchmark OMP_NUM_THREADS for RotatE (subprocess-based).",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    p.add_argument("--data-dir",  required=True,
-                   help="BioCypher output dir (biocypher_out/).")
+    p.add_argument("--data-dir", required=True,
+                   help="BioCypher output dir, e.g. biocypher_out/human/")
+    p.add_argument("--out", default="benchmark_threads.png",
+                   help="Output PNG path.")
+    p.add_argument("--threads", type=int, nargs="+", default=None,
+                   help="Explicit thread counts to test. "
+                        "Default: powers of 2 up to os.cpu_count().")
     p.add_argument("--cache-dir", default=".cache/triples",
-                   help="TriplesFactory cache dir — strongly recommended.")
-    p.add_argument("--out",       default="benchmark_threads.png",
-                   help="Path for the output PNG chart.")
-    p.add_argument("--tmp-dir",   default="/tmp/bench_threads",
-                   help="Temporary dir for per-run model outputs.")
-    p.add_argument("--max-threads", type=int, default=None,
-                   help="Max thread count to test (default: os.cpu_count()).")
-    p.add_argument("--device",    default="cpu",
-                   choices=["cpu", "cuda", "auto"],
-                   help="Device for training (use cpu to benchmark threads).")
+                   help="TriplesFactory cache dir. Strongly recommended: without it "
+                        "each subprocess re-parses all CSV files (~1-2 min each).")
+    p.add_argument("--tmp-dir", default=None,
+                   help="Temp dir for per-run outputs (auto-created if omitted).")
     return p.parse_args()
 
 
@@ -222,16 +259,20 @@ if __name__ == "__main__":
         datefmt="%H:%M:%S",
     )
 
-    args = _parse_args()
-    max_n = args.max_threads or (os.cpu_count() or 1)
-    counts = _thread_counts(max_n)
+    args  = _parse_args()
+    counts = args.threads or _default_thread_counts()
 
-    results = run_benchmark(
-        data_dir=args.data_dir,
-        cache_dir=args.cache_dir,
-        thread_counts=counts,
-        tmp_dir=args.tmp_dir,
-        device=args.device,
-    )
+    own_tmp = args.tmp_dir is None
+    tmp_root = Path(args.tmp_dir) if args.tmp_dir else Path(tempfile.mkdtemp(prefix="bench_threads_"))
 
-    plot_results(results, out_path=args.out)
+    try:
+        results = run_benchmark(
+            data_dir=Path(args.data_dir),
+            thread_counts=counts,
+            tmp_root=tmp_root,
+            cache_dir=Path(args.cache_dir) if args.cache_dir else None,
+        )
+        plot_results(results, out_path=Path(args.out))
+    finally:
+        if own_tmp and tmp_root.exists():
+            shutil.rmtree(tmp_root, ignore_errors=True)
