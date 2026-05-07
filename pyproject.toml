@@ -16,6 +16,7 @@ license = {text = "MIT"}
 
 dependencies = [
     "biocypher>=0.11.0",
+    "matplotlib>=3.10.9",
     "obonet>=1.1.1",
     "pronto>=2.7.3",
     "pykeen>=1.11.1",
