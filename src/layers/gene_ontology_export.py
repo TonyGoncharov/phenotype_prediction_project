@@ -22,24 +22,36 @@ MOUSE_TAX_ID = "10090"
 # ------------------------------------------------------------------ #
 
 def read_gene2go(path: str | Path, tax_id: str) -> pd.DataFrame:
-    """Read NCBI gene2go file, keeping only genes of *tax_id* with non-IEA evidence."""
+    """Read NCBI gene2go file, keeping only genes of *tax_id* with non-IEA evidence.
+
+    Reads in 500k-row chunks to avoid loading all ~115M rows into memory at once.
+    """
     path = Path(path)
     logger.debug("Reading gene2go from %s (tax_id=%s)", path, tax_id)
-    df = pd.read_csv(
+    col_names = ["tax_id", "GeneID", "GO_ID", "Evidence", "Qualifier",
+                 "GO_term", "PubMed", "Category"]
+    chunks: list[pd.DataFrame] = []
+    total = 0
+    retained = 0
+    for chunk in pd.read_csv(
         path,
         sep="\t",
         dtype=str,
         comment="#",
         header=None,
-        names=["tax_id", "GeneID", "GO_ID", "Evidence", "Qualifier",
-               "GO_term", "PubMed", "Category"],
-    )
-    before = len(df)
-    df = df[df["tax_id"] == tax_id].copy()
-    df = df[~df["Evidence"].isin(IEA_CODES)].copy()
+        names=col_names,
+        chunksize=500_000,
+    ):
+        total += len(chunk)
+        chunk = chunk[chunk["tax_id"] == tax_id]
+        chunk = chunk[~chunk["Evidence"].isin(IEA_CODES)]
+        retained += len(chunk)
+        if len(chunk):
+            chunks.append(chunk)
+    df = pd.concat(chunks, ignore_index=True) if chunks else pd.DataFrame(columns=col_names)
     logger.debug(
         "gene2go: %d total rows → %d retained after filtering (tax_id=%s, excl. IEA)",
-        before, len(df), tax_id,
+        total, retained, tax_id,
     )
 
     df = df.rename(columns={
