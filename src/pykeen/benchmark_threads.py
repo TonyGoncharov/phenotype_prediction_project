@@ -45,6 +45,13 @@ import tempfile
 import time
 from pathlib import Path
 
+# When invoked as `python src/pykeen/benchmark_threads.py`, Python puts
+# `src/pykeen` on sys.path[0], not the project root, so `src.pykeen.train`
+# is unfindable.  Compute the project root from __file__ and prepend it.
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
 import matplotlib
 
 matplotlib.use("Agg")
@@ -166,17 +173,31 @@ def preflight_checks(
     # We check at the *spec* level (find the module without importing it) to
     # avoid loading PyTorch/PyKEEN here, which would defeat the purpose of the
     # subprocess isolation pattern.
-    spec = importlib.util.find_spec(train_module)
+    #
+    # find_spec() raises ModuleNotFoundError (not just returns None) when a
+    # parent package exists on disk but is not importable.  Catch it so the
+    # preflight summary is never an unhandled traceback.
+    try:
+        spec = importlib.util.find_spec(train_module)
+        _find_spec_exc: BaseException | None = None
+    except ModuleNotFoundError as _exc:
+        spec = None
+        _find_spec_exc = _exc
+
     if spec is not None:
         print(f"  [ OK ] module found     : {train_module}  →  {spec.origin}")
     else:
         # Try to give a more helpful diagnosis
         parts = train_module.split(".")
         parent = ".".join(parts[:-1])
-        parent_spec = importlib.util.find_spec(parent) if parent else None
+        try:
+            parent_spec = importlib.util.find_spec(parent) if parent else None
+        except ModuleNotFoundError:
+            parent_spec = None
+        exc_detail = f" ({_find_spec_exc})" if _find_spec_exc else ""
         if parent_spec is None:
             print(
-                f"  [WARN] module not found : {train_module}\n"
+                f"  [WARN] module not found : {train_module}{exc_detail}\n"
                 f"         Parent package '{parent}' is also missing from "
                 f"sys.path.  Make sure you run this script from the project "
                 f"root and that the package is installed or on PYTHONPATH.\n"
@@ -185,7 +206,7 @@ def preflight_checks(
             )
         else:
             print(
-                f"  [WARN] module not found : {train_module}\n"
+                f"  [WARN] module not found : {train_module}{exc_detail}\n"
                 f"         Parent package '{parent}' exists at {parent_spec.origin}, "
                 f"but the 'train' sub-module was not found.  "
                 f"Check the module path."
@@ -237,6 +258,14 @@ def _build_cmd_and_env(
 ) -> tuple[list[str], dict[str, str]]:
     """Return (cmd, env) for the subprocess call."""
     env = os.environ.copy()
+
+    # Ensure the project root reaches the subprocess so `python -m src.pykeen.train`
+    # resolves even when the subprocess inherits a stripped or absent PYTHONPATH.
+    _existing_pp = env.get("PYTHONPATH", "")
+    _root_str = str(_PROJECT_ROOT)
+    if _root_str not in _existing_pp.split(os.pathsep):
+        env["PYTHONPATH"] = _root_str + (os.pathsep + _existing_pp if _existing_pp else "")
+
     for var in _THREAD_ENV_VARS:
         env[var] = str(n_threads)
     # Also set PyTorch intra-op thread count via env var so it is honoured
