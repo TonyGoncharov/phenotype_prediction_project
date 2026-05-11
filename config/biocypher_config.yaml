@@ -4,7 +4,7 @@ biocypher:
   cache_directory: .cache
 
   head_ontology:
-    url: data/biolink-model.owl.ttl
+    url: https://github.com/biolink/biolink-model/raw/v3.2.1/biolink-model.owl.ttl
     root_node: entity
 
 neo4j:
