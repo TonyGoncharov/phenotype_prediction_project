@@ -90,6 +90,10 @@ human gene has mp top term:
   is_a: gene to phenotypic feature association
   source: human gene
   target: mp top term
+  properties:
+    derived: bool
+    source_hp_ids: str[]
+    min_hp_to_anchor_distance: int
 
 human gene has go term:
   represented_as: edge
