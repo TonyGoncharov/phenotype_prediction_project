@@ -79,6 +79,7 @@ _THREAD_ENV_VARS = [
     "NUMEXPR_NUM_THREADS",
     "VECLIB_MAXIMUM_THREADS",  # Accelerate (macOS)
     "TF_NUM_INTRAOP_THREADS",  # TensorFlow, no-op for PyKEEN but harmless
+    "PYTORCH_NUM_THREADS",
 ]
 
 
@@ -268,9 +269,6 @@ def _build_cmd_and_env(
 
     for var in _THREAD_ENV_VARS:
         env[var] = str(n_threads)
-    # Also set PyTorch intra-op thread count via env var so it is honoured
-    # before torch is imported inside the subprocess.
-    env["PYTORCH_NUM_THREADS"] = str(n_threads)
 
     cmd = [
         sys.executable, "-m", train_module,

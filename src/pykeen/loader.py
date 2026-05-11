@@ -23,18 +23,7 @@ def _read_type(
     type_name: str,
     sep: str = CSV_SEP,
 ) -> Optional[pd.DataFrame]:
-    """Read all part files for *type_name* and return a single DataFrame.
-
-    Parameters
-    ----------
-    bc_dir    : directory containing BioCypher output (e.g. biocypher_out/human/)
-    type_name : BioCypher type name, e.g. 'HumanGeneHasMpTopTerm'
-    sep       : CSV field separator (default: tab)
-
-    Returns
-    -------
-    DataFrame with the header columns, or None if no files were found.
-    """
+    """Read all part files for *type_name*; returns None if no files were found."""
     header_path = bc_dir / f"{type_name}-header.csv"
     if not header_path.exists():
         logger.warning("Header file not found: %s", header_path)
@@ -111,19 +100,10 @@ def load_triples(
 ) -> np.ndarray:
     """Load all edges from BioCypher CSVs as (head, relation, tail) string triples.
 
-    Parameters
-    ----------
-    bc_dir             : biocypher_out/human/ directory
-    include_relations  : if given, only these relation types are loaded
-                         (e.g. {"HumanGeneHasMpTopTerm"}).
-                         None (default) = load everything — recommended, because
-                         the richer context improves all entity embeddings.
-    sep                : CSV separator (default: tab, from biocypher_config.yaml)
+    include_relations=None (default) loads all relation types — recommended
+    because the richer context improves all entity embeddings.
 
-    Returns
-    -------
-    np.ndarray of shape (N, 3) with dtype str.
-    Columns: [head_id, relation_type, tail_id]
+    Returns np.ndarray of shape (N, 3): [head_id, relation_type, tail_id].
     """
     bc_dir = Path(bc_dir)
     if not bc_dir.exists():
@@ -212,22 +192,11 @@ def build_triples_factory(
 ) -> TriplesFactory:
     """Build a PyKEEN TriplesFactory from a BioCypher output directory.
 
-    Parameters
-    ----------
-    bc_dir                   : biocypher_out/human/
-    include_relations        : relation whitelist (None = all)
-    create_inverse_triples   : if True, add (tail, relation_inverse, head) for
-                               every triple — can improve tail prediction quality
-                               at the cost of doubling the triple count.
-    sep                      : CSV separator
-    cache_dir                : if given, cache the TriplesFactory here as a binary
-                               file and reload it on subsequent calls with the same
-                               parameters.  Invalidated automatically when any
-                               source CSV is newer than the cache.
+    create_inverse_triples adds (tail, relation_inverse, head) for every triple —
+    can improve tail prediction quality at the cost of doubling the triple count.
 
-    Returns
-    -------
-    TriplesFactory ready to be split and fed to PyKEEN models.
+    cache_dir persists the TriplesFactory as a binary and reloads it on subsequent
+    calls; invalidated automatically when any source CSV is newer than the cache.
     """
     bc_dir = Path(bc_dir)
 

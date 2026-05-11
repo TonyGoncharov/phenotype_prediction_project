@@ -1,35 +1,9 @@
-"""src/pykeen/predict.py — gene → MP top term link prediction.
-
-Usage — interactive / notebook
-────────────────────────────────
-    from src.pykeen.predict import GenePhenotypePredictor
+"""src/pykeen/predict.py — gene ↔ MP top term link prediction using a trained RotatE model.
 
     predictor = GenePhenotypePredictor.from_directory("pykeen_out/rotate/")
-
-    # Top-20 predicted phenotypes for TP53
     df = predictor.predict_for_gene("HGNC:TP53", top_k=20)
-    print(df)
-
-    # Batch: multiple genes at once
-    batch_df = predictor.predict_batch(
-        ["HGNC:BRCA1", "HGNC:BRCA2", "HGNC:TP53"],
-        top_k=10,
-    )
-
-    # Find genes most likely to have a specific phenotype
-    gene_df = predictor.predict_for_phenotype("MP:0001265", top_k=30)
-
-Usage — CLI
-────────────
-    python -m src.pykeen.predict \\
-        --model-dir pykeen_out/rotate/ \\
-        --gene HGNC:TP53 \\
-        --top-k 20
-
-    python -m src.pykeen.predict \\
-        --model-dir pykeen_out/rotate/ \\
-        --phenotype MP:0001265 \\
-        --top-k 30
+    df = predictor.predict_for_phenotype("MP:0001265", top_k=30)
+    df = predictor.predict_batch_for_phenotypes(["MP:0005387", "MP:0005384"], top_k=50)
 """
 
 from __future__ import annotations
@@ -49,17 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 class GenePhenotypePredictor:
-    """Wrapper around a trained PyKEEN model for gene → phenotype prediction.
-
-    Attributes
-    ----------
-    model        : trained PyKEEN model (eval mode, no grad)
-    training_tf  : TriplesFactory used during training (for entity/relation IDs
-                   and for filtering already-known links)
-    relation     : relation type name used for (gene → MP) queries
-    mp_entities  : list of all MP top-term IDs in the graph
-    gene_entities: list of all human gene IDs in the graph  (HGNC: prefix)
-    """
+    """Wrapper around a trained PyKEEN model for gene ↔ phenotype prediction."""
 
     # ── Construction ─────────────────────────────────────────────────────────
 
@@ -129,18 +93,9 @@ class GenePhenotypePredictor:
     ) -> pd.DataFrame:
         """Predict the top-K most likely MP phenotypes for a single gene.
 
-        Parameters
-        ----------
-        gene_id       : entity ID in the graph, e.g. 'HGNC:TP53'
-        top_k         : number of results to return
-        filter_known  : if True, exclude (gene, phenotype) pairs already
-                        present in the training set  → novel predictions only
-        only_mp_terms : if True, restrict candidates to entities that begin
-                        with 'MP:'  — removes noise from other entity types
-
-        Returns
-        -------
-        DataFrame with columns: gene_id | mp_term_id | score | rank
+        filter_known=True excludes training-set pairs (novel predictions only).
+        only_mp_terms=True restricts candidates to MP: entities.
+        Returns DataFrame: gene_id | mp_term_id | score | rank.
         """
         self._check_entity(gene_id)
 
@@ -153,7 +108,6 @@ class GenePhenotypePredictor:
         if filter_known:
             pred = pred.filter_triples(self.training_tf)
 
-        # pred.df columns: tail_id | score | tail_label
         pred_df = pred.df
         if only_mp_terms:
             pred_df = pred_df[pred_df["tail_label"].str.startswith("MP:")].copy()
@@ -177,18 +131,8 @@ class GenePhenotypePredictor:
     ) -> pd.DataFrame:
         """Predict the top-K genes most likely associated with an MP phenotype.
 
-        This is the *inverse* query: fixing the *tail* and scoring all heads.
-
-        Parameters
-        ----------
-        mp_term_id   : MP top-term ID, e.g. 'MP:0001265'
-        top_k        : number of results to return
-        filter_known : exclude already-known gene–phenotype pairs
-        only_genes   : restrict to HGNC: entities
-
-        Returns
-        -------
-        DataFrame with columns: mp_term_id | gene_id | score | rank
+        Inverse query: fixes the tail and scores all heads.
+        Returns DataFrame: mp_term_id | gene_id | score | rank.
         """
         self._check_entity(mp_term_id)
 
@@ -201,7 +145,6 @@ class GenePhenotypePredictor:
         if filter_known:
             pred = pred.filter_triples(self.training_tf)
 
-        # pred.df columns: head_id | score | head_label
         pred_df = pred.df
         if only_genes:
             pred_df = pred_df[pred_df["head_label"].str.startswith("HGNC:")].copy()
@@ -215,7 +158,7 @@ class GenePhenotypePredictor:
 
     # ── Batch prediction ──────────────────────────────────────────────────────
 
-    def predict_batch(
+    def predict_batch_for_genes(
         self,
         gene_ids: list[str],
         top_k: int = 20,
@@ -223,8 +166,8 @@ class GenePhenotypePredictor:
     ) -> pd.DataFrame:
         """Predict phenotypes for a list of genes.
 
-        Returns a combined DataFrame with a 'gene_id' column prepended.
         Genes not found in the graph are skipped with a warning.
+        Returns DataFrame: gene_id | mp_term_id | score | rank.
         """
         frames: list[pd.DataFrame] = []
         for gid in gene_ids:
@@ -235,9 +178,32 @@ class GenePhenotypePredictor:
                 logger.warning("Skipping %s: %s", gid, exc)
 
         if not frames:
-            return pd.DataFrame(
-                columns=["gene_id", "mp_term_id", "score", "rank", "in_training"]
-            )
+            return pd.DataFrame(columns=["gene_id", "mp_term_id", "score", "rank"])
+        return pd.concat(frames, ignore_index=True)
+
+    def predict_batch_for_phenotypes(
+        self,
+        mp_term_ids: list[str],
+        top_k: int = 50,
+        filter_known: bool = True,
+    ) -> pd.DataFrame:
+        """Rank genes for a list of MP top terms.
+
+        Preferred for ablation study and cross-species comparison: produces a ranked
+        gene list per phenotype class evaluable with AUPRC.
+        MP terms not in the graph are skipped with a warning.
+        Returns DataFrame: mp_term_id | gene_id | score | rank.
+        """
+        frames: list[pd.DataFrame] = []
+        for mp_id in mp_term_ids:
+            try:
+                df = self.predict_for_phenotype(mp_id, top_k=top_k, filter_known=filter_known)
+                frames.append(df)
+            except ValueError as exc:
+                logger.warning("Skipping %s: %s", mp_id, exc)
+
+        if not frames:
+            return pd.DataFrame(columns=["mp_term_id", "gene_id", "score", "rank"])
         return pd.concat(frames, ignore_index=True)
 
     # ── Embedding utilities ───────────────────────────────────────────────────
@@ -246,7 +212,6 @@ class GenePhenotypePredictor:
         """Return the learned embedding vector for an entity (detached CPU tensor)."""
         self._check_entity(entity_id)
         idx = self.training_tf.entity_to_id[entity_id]
-        # Works for any EntityRelationEmbeddingModel subclass
         emb = self.model.entity_representations[0](
             indices=torch.tensor([idx])
         )
@@ -264,27 +229,29 @@ class GenePhenotypePredictor:
         """
         self._check_entity(query_gene_id)
 
-        query_emb = self.entity_embedding(query_gene_id)           # (dim,)
-        # Gather all gene embeddings in one batch
+        query_emb = self.entity_embedding(query_gene_id)
         gene_indices = torch.tensor(
             [self.training_tf.entity_to_id[g] for g in self.gene_entities]
         )
         all_embs = self.model.entity_representations[0](
             indices=gene_indices
-        ).detach().cpu()                                             # (N, dim)
+        ).detach().cpu()
 
-        # Cosine similarity
         query_norm = query_emb / query_emb.norm().clamp(min=1e-8)
         all_norms  = all_embs / all_embs.norm(dim=1, keepdim=True).clamp(min=1e-8)
         sims = (all_norms @ query_norm).numpy()
 
         idx_sorted = sims.argsort()[::-1]
         results = []
-        for rank, i in enumerate(idx_sorted[:top_k + 1], start=0):
+        for i in idx_sorted[:top_k + 1]:
             gid = self.gene_entities[i]
             if gid == query_gene_id:
                 continue
-            results.append({"gene_id": gid, "cosine_similarity": float(sims[i]), "rank": rank})
+            results.append({
+                "gene_id": gid,
+                "cosine_similarity": float(sims[i]),
+                "rank": len(results) + 1,
+            })
             if len(results) == top_k:
                 break
 

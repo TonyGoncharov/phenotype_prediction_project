@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 
 import torch
+from pykeen.evaluation import RankBasedEvaluator
 from pykeen.pipeline import pipeline
 from pykeen.triples import TriplesFactory
 
@@ -13,6 +14,9 @@ from .config import DEFAULT_CONFIG, GENE_PHENOTYPE_RELATION
 from .loader import build_triples_factory
 
 logger = logging.getLogger(__name__)
+
+# Models that operate in complex embedding space and are known to fail on MPS.
+_COMPLEX_SPACE_MODELS = {"RotatE", "ComplEx", "QuatE", "RotatH", "OTE"}
 
 
 # ── Data splitting ────────────────────────────────────────────────────────────
@@ -66,22 +70,7 @@ def run_training(
 ) -> dict:
     """Full RotatE training + evaluation run.
 
-    Parameters
-    ----------
-    data_dir  : path to biocypher_out/human/ (BioCypher CSV output)
-    out_dir   : where to write model, checkpoints, logs, and summary
-    config    : dict of hyperparameter overrides (merged with DEFAULT_CONFIG)
-    device    : 'cpu', 'cuda', 'mps', or 'auto' (auto-detects GPU)
-    cache_dir : directory for caching the TriplesFactory binary.  On the first
-                run the factory is built from CSV and saved here; subsequent runs
-                load it directly, skipping the CSV parsing step entirely.
-                The cache is invalidated automatically when any source CSV is
-                newer than the cached file.
-
-    Returns
-    -------
-    Summary dict with config + evaluation metrics (MRR, Hits@K).
-    Also written to <out_dir>/summary.json.
+    Returns a summary dict (config + MRR/Hits@K metrics) also written to <out_dir>/summary.json.
     """
     cfg = {**DEFAULT_CONFIG, **(config or {})}
     include_relations = cfg.pop("include_relations", None)
@@ -105,7 +94,6 @@ def run_training(
         seed=cfg["random_seed"],
     )
 
-    # Report how many gene-phenotype triples ended up in each split
     _report_relation_split(tf, train_tf, val_tf, test_tf)
 
     # ── 2. Resolve device ────────────────────────────────────────────────────
@@ -120,11 +108,11 @@ def run_training(
     # RotatE works in complex space and calls norm() on complex tensors.
     # PyTorch MPS does not yet implement this op → RuntimeError at first batch.
     # Fall back to CPU automatically rather than crashing.
-    if device == "mps" and cfg.get("model", "RotatE") == "RotatE":
+    if device == "mps" and cfg.get("model") in _COMPLEX_SPACE_MODELS:
         logger.warning(
             "MPS (Apple Silicon GPU) does not support complex norm ops "
-            "required by RotatE (PyTorch limitation, not a bug in this code). "
-            "Falling back to CPU automatically."
+            "required by %s (PyTorch limitation). Falling back to CPU.",
+            cfg["model"],
         )
         device = "cpu"
 
@@ -147,7 +135,7 @@ def run_training(
 
         # ── Model ─────────────────────────────────────────────────────────────
         # RotatE needs even embedding_dim (complex space: dim/2 complex dims).
-        model="RotatE",
+        model=cfg["model"],
         model_kwargs=dict(
             embedding_dim=cfg["embedding_dim"],
         ),
@@ -156,8 +144,6 @@ def run_training(
         # sLCWA: fast stochastic negative sampling, standard for large KGs.
         training_loop="sLCWA",
 
-        # BasicNegativeSampler: for each positive (h,r,t) draw k random negatives
-        # by corrupting either the head or the tail uniformly at random.
         negative_sampler="basic",
         negative_sampler_kwargs=dict(
             num_negs_per_pos=cfg["num_negs_per_pos"],
@@ -188,7 +174,6 @@ def run_training(
         device=device,
         random_seed=cfg["random_seed"],
 
-        # Log per-epoch losses to a CSV file.
         result_tracker="csv",
         result_tracker_kwargs=dict(
             path=str(out_dir / "training_log.csv"),
@@ -201,12 +186,26 @@ def run_training(
     logger.info("=" * 60)
 
     result.save_to_directory(str(out_dir))
+    test_tf.to_path_binary(out_dir / "test_triples")
     logger.info("Saved PyKEEN pipeline result to: %s", out_dir)
+
+    # ── 4b. 24-way G→P ranking evaluation ────────────────────────────────────
+    # Separate pass restricted to the ~24 MP top-terms as tail candidates.
+    # Makes MRR/Hits@K comparable across ablation conditions (constant pool size).
+    gp_metrics = _evaluate_gp_ranking(
+        model=result.model,
+        train_tf=train_tf,
+        val_tf=val_tf,
+        test_tf=test_tf,
+        device=device,
+        eval_batch_size=cfg["eval_batch_size"],
+    )
 
     # ── 5. Build summary ──────────────────────────────────────────────────────
     summary = {
         "model": cfg["model"],
         "device": device,
+        "include_relations": sorted(include_relations) if include_relations else None,
         "graph": {
             "num_entities": tf.num_entities,
             "num_relations": tf.num_relations,
@@ -225,6 +224,10 @@ def run_training(
             "mrr": _safe_metric(result, "inverse_harmonic_mean_rank"),
             "mr":  _safe_metric(result, "mean_rank"),
         },
+        # 24-way tail-only ranking: candidates restricted to the MP top-terms seen
+        # in training (~24 entities).  Directly comparable across ablation conditions
+        # because the candidate pool is constant regardless of total entity count.
+        "gp_metrics": gp_metrics,
     }
 
     summary_path = out_dir / "summary.json"
@@ -234,12 +237,123 @@ def run_training(
     logger.info("Evaluation results (filtered, realistic):")
     for k, v in summary["metrics"].items():
         logger.info("  %-12s  %s", k, f"{v:.4f}" if isinstance(v, float) else v)
+    if gp_metrics:
+        logger.info("─" * 40)
+        logger.info("G→P 24-way tail ranking (%d candidates):", gp_metrics.get("gp_n_candidates", "?"))
+        for k in ("gp_mrr", "gp_hits_at_1", "gp_hits_at_3", "gp_hits_at_10", "gp_mr"):
+            v = gp_metrics.get(k)
+            logger.info("  %-18s  %s", k, f"{v:.4f}" if isinstance(v, float) else v)
     logger.info("Summary → %s", summary_path)
 
     return summary
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+
+def _evaluate_gp_ranking(
+    model,
+    train_tf:       TriplesFactory,
+    val_tf:         TriplesFactory,
+    test_tf:        TriplesFactory,
+    device:         str,
+    eval_batch_size: int,
+) -> dict:
+    """24-way tail-restricted ranking evaluation on gene→phenotype triples only.
+
+    Filters the test set to ``HumanGeneHasMpTopTerm`` triples, then runs a
+    second RankBasedEvaluator pass with the candidate tail set restricted to the
+    MP top-terms seen during training (~24 entities).
+
+    Why this matters for ablation studies
+    --------------------------------------
+    The standard PyKEEN evaluation ranks the correct answer among *all* entities
+    in the graph.  Removing a relation type (e.g. PPI) shrinks the graph from
+    60k → 36k entities, artificially inflating MRR/Hits@K — not because the
+    model is better but because the pool is smaller.
+
+    By fixing the candidate set to the same ~24 MP top-terms in every condition,
+    the task becomes a constant-difficulty 24-way classification and the metrics
+    are directly comparable across ablation conditions.
+
+    Metric extraction
+    -----------------
+    Only tail-side metrics are reported.  Head prediction with 24 MP-term
+    candidates is meaningless (the correct head is a gene, never in the MP set).
+    """
+    rel_id_test = test_tf.relation_to_id.get(GENE_PHENOTYPE_RELATION)
+    if rel_id_test is None:
+        logger.warning("G→P relation absent from test set — skipping 24-way eval")
+        return {}
+
+    # ── Filter test to G→P triples ────────────────────────────────────────────
+    gp_mask = test_tf.mapped_triples[:, 1] == rel_id_test
+    gp_test = test_tf.mapped_triples[gp_mask]
+    if len(gp_test) == 0:
+        logger.warning("No G→P triples in test fold — skipping 24-way eval")
+        return {}
+
+    # ── Candidate set: MP top-terms present in training ───────────────────────
+    # Using training IDs ensures no cold-start MP terms sneak into the pool.
+    rel_id_train = train_tf.relation_to_id.get(GENE_PHENOTYPE_RELATION)
+    if rel_id_train is not None:
+        train_gp_mask = train_tf.mapped_triples[:, 1] == rel_id_train
+        mp_ids = torch.unique(train_tf.mapped_triples[train_gp_mask][:, 2])
+    else:
+        logger.warning("G→P relation absent from training set — using test MP terms as candidates")
+        mp_ids = torch.unique(gp_test[:, 2])
+
+    n_candidates = int(mp_ids.shape[0])
+    n_test       = int(gp_test.shape[0])
+    logger.info(
+        "G→P 24-way eval — %d test triples | %d MP candidates",
+        n_test, n_candidates,
+    )
+
+    # ── Second evaluation pass ────────────────────────────────────────────────
+    evaluator = RankBasedEvaluator(filtered=True)
+    try:
+        eval_result = evaluator.evaluate(
+            model=model,
+            mapped_triples=gp_test,
+            additional_filter_triples=[
+                train_tf.mapped_triples,
+                val_tf.mapped_triples,
+            ],
+            restrict_entities_to=mp_ids,
+            batch_size=eval_batch_size,
+            device=device,
+        )
+    except Exception:
+        logger.exception("24-way G→P evaluation failed")
+        return {}
+
+    def _get(primary: str, fallback: str | None = None) -> float | None:
+        """Extract metric with optional fallback key for PyKEEN version compat."""
+        try:
+            return float(eval_result.get_metric(primary))
+        except Exception:
+            pass
+        if fallback:
+            try:
+                return float(eval_result.get_metric(fallback))
+            except Exception:
+                pass
+        return None
+
+    # Tail-side dot-notation: "tail.realistic.<metric>"
+    # Fallback to unprefixed key for older PyKEEN builds.
+    metrics: dict = {
+        "gp_mrr":          _get("tail.realistic.inverse_harmonic_mean_rank",
+                                "inverse_harmonic_mean_rank"),
+        "gp_hits_at_1":    _get("tail.realistic.hits@1",  "hits@1"),
+        "gp_hits_at_3":    _get("tail.realistic.hits@3",  "hits@3"),
+        "gp_hits_at_10":   _get("tail.realistic.hits@10", "hits@10"),
+        "gp_mr":           _get("tail.realistic.mean_rank", "mean_rank"),
+        "gp_n_candidates": n_candidates,
+        "gp_n_test":       n_test,
+    }
+    return metrics
 
 
 def _safe_metric(result, key: str) -> float | None:
@@ -261,7 +375,6 @@ def _report_relation_split(
     val_tf:     TriplesFactory,
     test_tf:    TriplesFactory,
 ) -> None:
-    """Log how many gene→phenotype triples appear in each split."""
     if GENE_PHENOTYPE_RELATION not in full_tf.relation_to_id:
         return
     rel_id = full_tf.relation_to_id[GENE_PHENOTYPE_RELATION]
@@ -313,7 +426,7 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--seed",    type=int,   default=DEFAULT_CONFIG["random_seed"])
     p.add_argument(
         "--fast", action="store_true",
-        help="Smoke-test preset: dim=64, epochs=20, negs=32, batch=1024. "
+        help="Smoke-test preset: dim=64, epochs=30, negs=32, batch=1024. "
              "Completes in ~10 min on CPU. Verify the pipeline before a full run.",
     )
     p.add_argument(
