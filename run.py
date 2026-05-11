@@ -1,44 +1,21 @@
-"""run.py - single entry point for the gene-phenotype knowledge graph pipeline.
+"""
+run.py - single entry point for the gene-phenotype knowledge graph pipeline.
 
 Usage
 -----
   uv run python run.py                          # full pipeline, both graphs
-  uv run python run.py --species human          # human graph only
-  uv run python run.py --species mouse          # mouse graph only
+  uv run python run.py --species human
   uv run python run.py --skip-export            # skip TSV generation
   uv run python run.py --clean-tsv --clean-graph
   uv run python run.py --help
 
+  uv run python run.py --species human --clean-tsv --clean-graph
+
 Required data files (put in data/)
 -------------------------------------
-  HP2MP.tsv                - HP→MP anchor mapping from MGI
-  genes_to_phenotype.txt   - HPO gene→phenotype annotations
-  MGI_PhenoGenoMP.rpt      - MGD genotype→MP annotations
-  gene2go.gz               - NCBI Gene→GO mappings (all species)
-  gene_info.gz             - NCBI gene info (symbol + MGI cross-refs)
-                             https://ftp.ncbi.nlm.nih.gov/gene/DATA/gene_info.gz
-  data/hp.obo              - HP ontology
-  data/mp.obo              - MP ontology
-  data/go-basic.obo        - GO ontology
-  BIOGRID-ALL-*.tab3.txt   - BioGRID protein-protein interactions (human, tab3)
-                             https://downloads.thebiogrid.org/BioGRID
-  data/uberon_basic.obo    - Uberon anatomical ontology (basic, no cross-ontology imports)
-                             wget http://purl.obolibrary.org/obo/uberon/basic.obo
-
-Output layout (--species both, the default)
----------------------------------------------
-  biocypher_out/
-    human/   <- human graph CSVs + neo4j-admin-import-call.sh
-    mouse/   <- mouse graph CSVs + neo4j-admin-import-call.sh
-
-Adding a new data layer
------------------------
-  1. Create adapter.py with Human<N>Adapter and Mouse<N>Adapter
-     inheriting BaseAdapter.  Set layer_name on each subclass.
-  2. Create export.py with the export pipeline.
-  3. Register both adapter classes in build_graph.py → SPECIES_LAYERS.
-  4. Add schema sections to schema_config_human.yaml / _mouse.yaml.
-  5. Add the export call below (Step N).
+  HP2MP.tsv, genes_to_phenotype.txt, MGI_PhenoGenoMP.rpt, gene2go.gz,
+  gene_info.gz, hp.obo, mp.obo, BIOGRID-ALL-*.tab3.txt, uberon_basic.obo
+  (see --help for per-file paths and sources)
 """
 
 from __future__ import annotations
@@ -248,11 +225,8 @@ def main() -> None:
     tsv_out = Path(args.tsv_out)
     skip_layers = [s.lower() for s in args.skip_layers]
 
-    # Initialise logging before any export step so their logger.* calls
-    # reach the file handler.  build() also calls setup_logging() but that
-    # runs after all exports — too late.  setup_logging() is idempotent.
-    # pipeline.log goes to biocypher-log/ (not biocypher_out/) so it survives
-    # --clean-graph which deletes biocypher_out/ after this call.
+    # Must run before exports so their log calls reach the file handler.
+    # Goes to biocypher-log/ (not biocypher_out/) so it survives --clean-graph.
     setup_logging(out_dir=Path("biocypher-log"))
 
     if args.skip_export:
@@ -267,9 +241,7 @@ def main() -> None:
         tsv_out.mkdir(parents=True, exist_ok=True)
 
         # -- Step 0: HP→MP system-level mapping (human only) ---------------
-        # Produces edge_hp_to_mp_top.tsv and node_mp_top_names.tsv, which
-        # are consumed by Step 1. Always runs when the human branch is active
-        # because the mapping is a prerequisite for phenotype edge export.
+        # Produces edge_hp_to_mp_top.tsv consumed by Step 1 — must run first.
         if args.species in ("human", "both"):
             print("=" * 60)
             print("Step 0 -- HP→MP system-level mapping")
@@ -284,8 +256,6 @@ def main() -> None:
             print(f"-> {tsv_out.resolve()}\n")
 
         # -- Step 1: phenotype edges (HPO + MGD) ---------------------------
-        # HPO is human-only; MGD is mouse-only — pass species so the
-        # pipeline skips whichever half is not needed.
         print("=" * 60)
         print("Step 1 -- Phenotype edges (HPO + MGD)")
         print("=" * 60)
@@ -348,10 +318,8 @@ def main() -> None:
             print(f"-> {tsv_out.resolve()}\n")
 
         # -- Step 6: Uberon anatomical ontology — human only --------------
-        # Requires: curated GTEX_TO_UBERON mapping (always built-in).
-        # Optional: --uberon-obo basic.obo populates name/definition/synonyms.
-        # Uses the expression TSV produced in Step 4 to restrict output to
-        # tissues that actually appear in the expression layer.
+        # --uberon-obo is optional; without it, nodes get empty metadata (stub mode).
+        # Expression TSV from Step 4 restricts output to tissues in the expression layer.
         if "uberon" not in skip_layers and args.species in ("human", "both"):
             print("=" * 60)
             print("Step 6 -- Uberon anatomical ontology, human")
