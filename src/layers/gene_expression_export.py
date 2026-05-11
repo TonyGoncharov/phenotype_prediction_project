@@ -1,35 +1,8 @@
 """src/layers/gene_expression_export.py — GTEx expression pipeline for the KG.
 
-Data sources
-------------
-  gtex_median_tpm.gct.gz  - GTEx median gene expression per tissue (GCT format)
-                            https://gtexportal.org/home/datasets
-                            File: GTEx_Analysis_v10_RNASeQCv2.4.2_gene_median_tpm.gct.gz
-                            (or whichever GTEx release is current)
-
-GCT format
-----------
-  Line 1 : #1.2
-  Line 2 : <n_genes>\\t<n_tissues>
-  Line 3+: Name\\tDescription\\t<tissue_1>\\t<tissue_2>\\t...
-            ENSG...\\t<symbol>\\t<tpm>\\t<tpm>\\t...
-
-  Name        — Ensembl gene ID with version suffix (e.g. ENSG00000223972.5)
-  Description — HGNC gene symbol
-
-Outputs (written to out_dir)
-----------------------------
-  edge_human_gene_expressed_in_tissue.tsv
-      gene_symbol, tissue_id, tissue_name, median_tpm
-      One row per (gene, tissue) pair where median TPM >= threshold.
-
-  node_tissue_gtex.tsv
-      tissue_id, tissue_name
-      One row per unique tissue (used by adapter for node properties).
-
-  qc_expression_unexpressed_genes.tsv
-      gene_symbol
-      Genes present in GTEx but with no tissue above the TPM threshold.
+Input : GTEx_Analysis_v10_RNASeQCv2.4.2_gene_median_tpm.gct.gz (GCT format)
+Output: edge_human_gene_expressed_in_tissue.tsv, node_tissue_gtex.tsv,
+        qc_expression_unexpressed_genes.tsv
 """
 
 from __future__ import annotations
@@ -96,7 +69,6 @@ def read_gtex_gct(path: str | Path) -> pd.DataFrame:
         raise ValueError("No tissue columns found in GCT file.")
     logger.debug("GCT: %d gene rows, %d tissue columns", len(df), len(tissue_cols))
 
-    # Wide → long
     df_long = df.melt(
         id_vars=[_GCT_SYM_COL],
         value_vars=tissue_cols,

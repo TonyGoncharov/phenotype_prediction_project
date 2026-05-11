@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from collections import deque
 
 import pandas as pd
 
@@ -75,52 +76,65 @@ def load_hp2mp(hp2mp_path: Path, exclude_mortality: bool = True) -> dict[str, li
 
 # ── 2. Core lift function ─────────────────────────────────────────────────────
 
-def lift_hp_to_anchors(hp_id: str, hp_ont, anchor_set: set[str]) -> list[str]:
-    """Return HP2MP anchor terms that are ancestors (or self) of hp_id.
+def lift_hp_to_anchors(hp_id: str, hp_ont, anchor_set: set[str]) -> dict[str, int]:
+    """Return {anchor_hp_id: distance} for all HP2MP anchors reachable from hp_id.
 
-    The anchor set is the set of HP terms present in HP2MP.tsv as object_id.
-    These are not necessarily canonical top-level terms (distance=1 from root)
-    — they are MGI-curated pivot points at various ontology levels.
+    Distance is the number of is_a steps in the HP ontology from hp_id to the anchor.
+    Distance = 0 means hp_id itself is an anchor term.
     """
     if hp_id not in hp_ont:
-        return []
+        return {}
     if hp_id in anchor_set:
-        return [hp_id]
-    ancestors = {t.id for t in hp_ont[hp_id].superclasses(with_self=False)}
-    return sorted(ancestors & anchor_set)
+        return {hp_id: 0}
+
+    visited: dict[str, int] = {hp_id: 0}
+    queue: deque[str] = deque([hp_id])
+    found: dict[str, int] = {}
+
+    while queue:
+        node = queue.popleft()
+        node_dist = visited[node]
+        if node not in hp_ont:
+            continue
+        for parent in hp_ont[node].superclasses(distance=1, with_self=False):
+            pid = parent.id
+            if pid in visited:
+                continue
+            visited[pid] = node_dist + 1
+            if pid in anchor_set:
+                found[pid] = node_dist + 1
+            else:
+                queue.append(pid)
+
+    return found
 
 
 # ── 3. Main mapping builder ───────────────────────────────────────────────────
 
-def build_hp_to_mp_top(
-    hp_ids: list[str],
-    hp_ont,
-    hp2mp: dict[str, list[str]],
-) -> pd.DataFrame:
-    """Map a list of HP term IDs to MP system-level terms.
-
-    For each hp_id:
-      1. Find HP anchor ancestors via ontology hierarchy.
-      2. Map each anchor to MP system-level terms via HP2MP.tsv.
-
-    Returns DataFrame with columns [hp_id, mp_top_id].
-    """
+def build_hp_to_mp_top(hp_ids, hp_ont, hp2mp):
     anchor_set = set(hp2mp.keys())
     rows = []
 
     for hp_id in sorted(set(hp_ids)):
-        anchors = lift_hp_to_anchors(hp_id, hp_ont, anchor_set)
-        mp_tops = {mp for a in anchors for mp in hp2mp.get(a, [])}
-        for mp_top in sorted(mp_tops):
-            rows.append({"hp_id": hp_id, "mp_top_id": mp_top})
+        anchor_distances = lift_hp_to_anchors(hp_id, hp_ont, anchor_set)  # {anchor: dist}
 
-    df = pd.DataFrame(rows) if rows else pd.DataFrame(columns=["hp_id", "mp_top_id"])
-    logger.info(
-        "HP→MP top mapping: %d / %d unique HP terms mapped (%d edges total)",
-        df["hp_id"].nunique() if not df.empty else 0,
-        len(set(hp_ids)),
-        len(df),
-    )
+        # Per (hp_id, mp_top_id): keep the anchor with minimum distance.
+        best: dict[str, tuple[str, int]] = {}  # mp_top_id → (anchor_hp_id, distance)
+        for anchor, dist in anchor_distances.items():
+            for mp_top in hp2mp.get(anchor, []):
+                if mp_top not in best or dist < best[mp_top][1]:
+                    best[mp_top] = (anchor, dist)
+
+        for mp_top, (anchor, dist) in sorted(best.items()):
+            rows.append({
+                "hp_id":                hp_id,
+                "mp_top_id":            mp_top,
+                "anchor_hp_id":         anchor,
+                "hp_to_anchor_distance": dist,
+            })
+
+    cols = ["hp_id", "mp_top_id", "anchor_hp_id", "hp_to_anchor_distance"]
+    df = pd.DataFrame(rows) if rows else pd.DataFrame(columns=cols)
     return df
 
 
@@ -214,10 +228,8 @@ def run_mapping(
     mapped_hp   = set(hp_to_mp_top["hp_id"].dropna()) if not hp_to_mp_top.empty else set()
 
     # HP terms with no anchor at all in HP2MP (cannot be lifted)
-    no_anchor = [
-        hp for hp in unique_hp
-        if not lift_hp_to_anchors(hp, hp_ont, anchor_set)
-    ]
+    no_anchor = [hp for hp in unique_hp if not lift_hp_to_anchors(hp, hp_ont, anchor_set)]
+    
     pd.DataFrame({"hp_id": sorted(no_anchor)}).to_csv(
         out_dir / "qc_hp_no_anchor.tsv", sep="\t", index=False
     )

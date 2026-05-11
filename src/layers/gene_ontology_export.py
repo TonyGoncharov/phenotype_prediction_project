@@ -74,7 +74,6 @@ def read_gene2go(path: str | Path, tax_id: str) -> pd.DataFrame:
 
 
 def build_ncbi_to_hgnc_map(genes_to_phenotype_path: str | Path) -> dict[str, str]:
-    """Build {ncbi_gene_id → hgnc_symbol} from the HPO annotation file."""
     logger.debug("Building NCBI→HGNC map from %s", genes_to_phenotype_path)
     df = pd.read_csv(genes_to_phenotype_path, sep="\t", dtype=str)
     required = {"ncbi_gene_id", "gene_symbol"}
@@ -104,7 +103,6 @@ def build_gene_go_edges(
     ncbi_to_symbol: dict[str, str],
     gene_col: str = "gene_symbol",
 ) -> pd.DataFrame:
-    """Map gene2go annotations to gene symbols."""
     df = gene2go.copy()
     df[gene_col] = df["ncbi_gene_id"].map(ncbi_to_symbol)
     before = len(df)

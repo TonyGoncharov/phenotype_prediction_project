@@ -1,57 +1,9 @@
-"""ppi_export.py – BioGRID protein-protein interaction export pipeline (human).
+"""
+ppi_export.py – BioGRID protein-protein interaction export pipeline (human).
 
-Input
------
-BioGRID tab3 file (``BIOGRID-ALL-*.tab3.txt`` or a species-specific
-``BIOGRID-ORGANISM-Homo_sapiens-*.tab3.txt``).
-
-Output  (written to *out_dir*)
--------------------------------
-node_human_protein.tsv
-    One row per unique human protein (gene-symbol-based ID).
-    Columns: protein_id, gene_symbol, organism
-
-edge_human_gene_encodes_protein.tsv
-    One row per gene → protein mapping (1-to-1 for human).
-    Columns: gene_symbol, protein_id
-
-edge_human_ppi.tsv
-    One row per unique interacting protein pair.
-    Columns: protein_id_a, protein_id_b, experimental_systems,
-             experimental_system_types, throughput, pubmed_ids, source_db
-
-qc_ppi_unmapped_symbols.tsv
-    Rows whose interactor symbols could not be resolved (rare but possible
-    when BioGRID contains deprecated symbols).
-
-BioGRID tab3 column reference
-------------------------------
-https://wiki.biogrid.org/index.php/BIOGRID_TAB_VERSION_3
-Key columns used here (0-based index in the file):
-
- 0  BioGRID Interaction ID
- 1  Entrez Gene Interactor A
- 2  Entrez Gene Interactor B
- 3  BioGRID ID Interactor A
- 4  BioGRID ID Interactor B
- 5  Systematic Name Interactor A
- 6  Systematic Name Interactor B
- 7  Official Symbol Interactor A  ← gene symbol
- 8  Official Symbol Interactor B  ← gene symbol
- 9  Synonyms Interactor A
-10  Synonyms Interactor B
-11  Experimental System
-12  Experimental System Type      ← "physical" | "genetic"
-13  Author
-14  Publication Source            ← PubMed ID
-15  Organism ID Interactor A      ← NCBI taxonomy ID
-16  Organism ID Interactor B
-17  Throughput                    ← "Low Throughput" | "High Throughput"
-18  Score
-19  Modification
-20  Qualifications
-21  Tags
-22  Source Database
+Input : BioGRID tab3 file (BIOGRID-ALL-*.tab3.txt or organism-specific variant)
+Output: node_human_protein.tsv, edge_human_gene_encodes_protein.tsv,
+        edge_human_ppi.tsv, qc_ppi_unmapped_symbols.tsv
 """
 
 from __future__ import annotations
@@ -210,7 +162,6 @@ def filter_human_physical(df: pd.DataFrame) -> pd.DataFrame:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def build_protein_nodes(ppi: pd.DataFrame) -> pd.DataFrame:
-    """One protein node per unique gene symbol referenced in the PPI table."""
     symbols = pd.concat([ppi["symbol_a"], ppi["symbol_b"]]).dropna().unique()
     logger.debug("Unique protein symbols: %d", len(symbols))
     return pd.DataFrame({
@@ -235,16 +186,8 @@ def build_gene_encodes_protein(protein_nodes: pd.DataFrame) -> pd.DataFrame:
 def build_ppi_edges(ppi: pd.DataFrame) -> pd.DataFrame:
     """Aggregate all evidence for each unique (protein_a, protein_b) pair.
 
-    The pair is made canonical (sorted alphabetically) so that
-    A–B and B–A are treated as one undirected edge.
-
-    Aggregated fields:
-    * experimental_systems  — sorted unique list
-    * experimental_system_types — sorted unique list
-    * throughput            — "Low Throughput" if any low-tp record exists,
-                              else "High Throughput"
-    * pubmed_ids            — sorted unique list
-    * source_db             — first value (usually "BioGRID")
+    The pair is canonicalised (sorted alphabetically) so A–B and B–A are one edge.
+    throughput collapses to "Low Throughput" if any low-throughput record exists.
     """
     df = ppi.copy()
     df["protein_id_a"] = PROTEIN_ID_PREFIX + df["symbol_a"]
@@ -286,15 +229,7 @@ def run_ppi_pipeline(
     biogrid_path: str | Path,
     out_dir: str | Path = "./out",
 ) -> dict[str, pd.DataFrame]:
-    """Full export pipeline for human PPI data from BioGRID.
-
-    Args:
-        biogrid_path: Path to the BioGRID tab3 file.
-        out_dir:      Output directory (created if absent).
-
-    Returns:
-        dict with keys "protein_nodes", "gene_encodes_protein", "ppi_edges".
-    """
+    """Full export pipeline for human PPI data from BioGRID."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -304,19 +239,16 @@ def run_ppi_pipeline(
     logger.info("Output dir   : %s", out_dir)
     logger.info("=" * 60)
 
-    # 1. Read & filter
     raw   = read_biogrid(biogrid_path)
     human = filter_human_physical(raw)
 
     if human.empty:
         logger.warning("No human physical interactions found — output files will be empty.")
 
-    # 2. Build tables
     protein_nodes        = build_protein_nodes(human)
     gene_encodes_protein = build_gene_encodes_protein(protein_nodes)
     ppi_edges            = build_ppi_edges(human)
 
-    # 3. Write TSVs
     protein_nodes.to_csv(
         out_dir / "node_human_protein.tsv", sep="\t", index=False
     )
@@ -327,7 +259,7 @@ def run_ppi_pipeline(
     )
     logger.debug("Written: edge_human_gene_encodes_protein.tsv (%d rows)", len(gene_encodes_protein))
 
-    # Serialise list columns as pipe-separated strings for TSV compatibility
+    # pipe-separate list columns for TSV compatibility
     ppi_out = ppi_edges.copy()
     for col in ("experimental_systems", "experimental_system_types", "pubmed_ids"):
         ppi_out[col] = ppi_out[col].apply(
@@ -336,8 +268,7 @@ def run_ppi_pipeline(
     ppi_out.to_csv(out_dir / "edge_human_ppi.tsv", sep="\t", index=False)
     logger.debug("Written: edge_human_ppi.tsv (%d rows)", len(ppi_out))
 
-    # 4. QC — symbols that appear in BioGRID but not in protein_nodes
-    #    (shouldn't happen but useful to surface)
+    # QC — shouldn't happen but surfaces deprecated BioGRID symbols
     known_symbols = set(protein_nodes["gene_symbol"])
     all_biogrid_symbols = (
         set(human["symbol_a"].dropna()) | set(human["symbol_b"].dropna())
@@ -347,7 +278,6 @@ def run_ppi_pipeline(
         out_dir / "qc_ppi_unmapped_symbols.tsv", sep="\t", index=False
     )
 
-    # 5. Summary
     logger.info("Protein nodes              : %d", len(protein_nodes))
     logger.info("Gene→Protein edges         : %d", len(gene_encodes_protein))
     logger.info("Protein↔Protein edges      : %d", len(ppi_edges))

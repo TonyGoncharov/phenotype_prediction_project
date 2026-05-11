@@ -115,26 +115,23 @@ def read_mgi_phenogenomp(path: str | Path) -> pd.DataFrame:
 
 # ── Human branch ──────────────────────────────────────────────────────────────
 
-def build_human_gene_mp_top(
-    g2p: pd.DataFrame,
-    hp_to_mp_top: pd.DataFrame,
-) -> pd.DataFrame:
-    """Join gene→HP associations with pre-computed HP→MP top mapping.
-
-    g2p columns:  gene_symbol, hpo_id, ...
-    hp_to_mp_top: hp_id, mp_top_id
-
-    Returns DataFrame with columns [gene_symbol, mp_top_id].
-    """
+def build_human_gene_mp_top(g2p, hp_to_mp_top):
     gene_hp = g2p[["gene_symbol", "hpo_id"]].drop_duplicates().dropna()
-    merged = (
-        gene_hp
-        .merge(hp_to_mp_top, left_on="hpo_id", right_on="hp_id", how="inner")
-        [["gene_symbol", "mp_top_id"]]
-        .drop_duplicates()
+    merged = gene_hp.merge(hp_to_mp_top, left_on="hpo_id", right_on="hp_id", how="inner")
+
+    # Aggregate per (gene_symbol, mp_top_id): collect all source HP terms
+    # and take the minimum distance to anchor across them.
+    agg = (
+        merged
+        .groupby(["gene_symbol", "mp_top_id"])
+        .agg(
+            source_hp_ids         =("hpo_id",                 lambda x: "|".join(sorted(x.unique()))),
+            min_hp_to_anchor_dist =("hp_to_anchor_distance",  "min"),
+        )
+        .reset_index()
     )
-    logger.debug("Human gene→MP top edges: %d", len(merged))
-    return merged
+    logger.debug("Human gene→MP top edges: %d", len(agg))
+    return agg
 
 
 # ── Mouse branch ──────────────────────────────────────────────────────────────
@@ -169,23 +166,8 @@ def run_pipeline(
 ) -> dict[str, pd.DataFrame]:
     """Run the gene→MP system-level edge pipeline.
 
-    Parameters
-    ----------
-    genes_to_phenotype_path:
-        HPO genes_to_phenotype.txt.
-    mgi_path:
-        MGI_GenePheno.rpt for mouse phenotype data.
-    data_dir:
-        Directory containing mp.obo (for mouse branch collapse_to_top).
-    mapping_dir:
-        Directory containing outputs of phenotype_mapping.py:
-        edge_hp_to_mp_top.tsv and node_mp_top_names.tsv.
-    gene_info_path:
-        gene_info file for MGI→symbol mapping (mouse branch).
-    out_dir:
-        Output directory for final edge TSVs.
-    species:
-        "human", "mouse", or "both".
+    mapping_dir must contain outputs of phenotype_mapping.py
+    (edge_hp_to_mp_top.tsv, node_mp_top_names.tsv).
     """
     out_dir     = Path(out_dir)
     data_dir    = Path(data_dir)

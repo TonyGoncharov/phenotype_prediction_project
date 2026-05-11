@@ -207,7 +207,6 @@ def build_tissue_to_uberon_edges(
         if tissue_ids_in_graph is not None and gtex_id not in tissue_ids_in_graph:
             logger.debug("Tissue not in expression layer, skipping: %s", gtex_id)
             continue
-        # Derive a human-readable tissue name from the GTEX: prefixed ID
         tissue_name = gtex_id.replace("GTEX:", "").replace("_", " ")
         rows.append({
             "gtex_tissue_id":   gtex_id,
@@ -301,7 +300,6 @@ def run_uberon_pipeline(
 
     if uberon_obo_path and Path(uberon_obo_path).exists():
         all_uberon = _parse_uberon_obo(uberon_obo_path)
-        # Keep only the terms that are actually referenced in the edge table
         uberon_terms = all_uberon[all_uberon["uberon_id"].isin(referenced_uberon_ids)].copy()
         missing = referenced_uberon_ids - set(uberon_terms["uberon_id"])
         if missing:
