@@ -1,11 +1,6 @@
 """src/pipeline/build_graph.py - assemble species-specific BioCypher graphs.
 
-Adding a new layer
-------------------
-1. Create src/layers/<n>/adapter.py with classes inheriting BaseAdapter.
-2. Set ``layer_name`` as a class attribute in each subclass.
-3. Register the classes in SPECIES_LAYERS below — that's the only file to touch.
-4. Add schema sections to config/schema_config_human.yaml / _mouse.yaml.
+To add a layer: register adapter classes in SPECIES_LAYERS below — that's the only file to touch.
 """
 
 from __future__ import annotations
@@ -75,10 +70,8 @@ def build_species(
 ) -> None:
     """Build the BioCypher graph for a single species.
 
-    Args:
-        allow_missing_layers: When False (default), a missing TSV raises
-            immediately — almost always a bug or a forgotten export step.
-            Pass True only when a partial graph is intentional.
+    allow_missing_layers=False (default) raises on a missing TSV — almost always
+    a bug.  Pass True only when a partial graph is intentional.
     """
     schema = schema_config_path or DEFAULT_SCHEMA[species]
     if not schema.exists():
@@ -92,7 +85,7 @@ def build_species(
 
     bc = biocypher.BioCypher(
         schema_config_path=str(schema),
-        biocypher_config_path=str(biocypher_config_path) if biocypher_config_path else None,
+        biocypher_config_path=str(biocypher_config_path or _CONFIG_DIR / "biocypher_config.yaml"),
         output_directory=str(out_dir),
     )
 
