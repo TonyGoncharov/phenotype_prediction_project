@@ -1,28 +1,7 @@
 """src/utils/logging_config.py — centralised logging setup for the KG pipeline.
 
-Usage (call once, as early as possible — in build_graph.py or a CLI entry point):
-
-    from src.utils.logging_config import setup_logging
-    setup_logging(out_dir="/path/to/output")
-
-Every other module then simply does:
-
-    import logging
-    logger = logging.getLogger(__name__)
-
-and uses logger.info / logger.debug / logger.warning / logger.error.
-
-Log levels
-----------
-  Console  : INFO  — progress, counts, warnings
-  File     : DEBUG — everything above + internal details useful for debugging
-
-Log file location
------------------
-  <out_dir>/pipeline.log
-
-  When building both species (species="both"), build_graph.py passes the
-  shared parent out_dir so both species share one log file for the run.
+Call setup_logging(out_dir=...) once before any export step.
+Console: INFO.  File (<out_dir>/pipeline.log): DEBUG.
 """
 
 from __future__ import annotations
@@ -34,7 +13,6 @@ from pathlib import Path
 # Module-level sentinel so setup_logging() is idempotent.
 _LOGGING_CONFIGURED = False
 
-# The logger that build_graph.py and the pipeline itself use.
 PIPELINE_LOGGER_NAME = "kg_pipeline"
 
 
@@ -44,20 +22,10 @@ def setup_logging(
     console_level: int = logging.INFO,
     file_level: int = logging.DEBUG,
 ) -> logging.Logger:
-    """Configure root logger with a console handler and a rotating file handler.
+    """Configure root logger with console and file handlers.
 
-    Safe to call multiple times — subsequent calls are no-ops and return the
-    already-configured pipeline logger.
-
-    Args:
-        out_dir:       Directory where the log file is written.
-                       Created if it does not exist.
-        log_filename:  Name of the log file (default: pipeline.log).
-        console_level: Minimum level for console output (default: INFO).
-        file_level:    Minimum level for file output (default: DEBUG).
-
-    Returns:
-        The pipeline logger (``logging.getLogger("kg_pipeline")``).
+    Idempotent — subsequent calls are no-ops and return the already-configured logger.
+    out_dir is created if absent; log file written to <out_dir>/pipeline.log.
     """
     global _LOGGING_CONFIGURED
     if _LOGGING_CONFIGURED:
@@ -98,14 +66,9 @@ def setup_logging(
     for noisy in ("neo4j", "urllib3", "httpx"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
-    # ── BioCypher → our file ─────────────────────────────────────────── #
-    # BioCypher creates its own FileHandler on first import, writing to
-    # biocypher-log/biocypher-<timestamp>.log.  We additionally route its
-    # WARNING+ messages into our pipeline.log so both sources are visible
-    # in one place.  propagate=True (the default) means root already sees
-    # these records, but the root handler may not have been attached yet
-    # when BioCypher initialised.  Adding file_handler directly guarantees
-    # delivery regardless of import order.
+    # Route BioCypher WARNING+ into pipeline.log regardless of import order
+    # (BioCypher attaches its own FileHandler on first import before our root
+    # handler exists, so we add file_handler directly rather than relying on propagate).
     bc_logger = logging.getLogger("biocypher")
     bc_logger.setLevel(logging.WARNING)
     bc_logger.addHandler(file_handler)
