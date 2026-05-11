@@ -91,7 +91,6 @@ class HumanPPIAdapter(BaseAdapter):
         yield from self._ppi_edges()
 
     def _gene_encodes_edges(self) -> Generator[EdgeTuple, None, None]:
-        """Yield Gene → Protein 'encodes' edges."""
         df = self._read(_GENE_ENCODES_FILE)
         if df.empty:
             self.logger.warning("Gene-encodes-protein file is empty.")
@@ -107,7 +106,6 @@ class HumanPPIAdapter(BaseAdapter):
             )
 
     def _ppi_edges(self) -> Generator[EdgeTuple, None, None]:
-        """Yield Protein ↔ Protein physical interaction edges."""
         df = self._read(_PPI_EDGES_FILE)
         if df.empty:
             self.logger.warning("PPI edge file is empty.")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Generator
+import pandas as pd
 
 from src.adapters.base import BaseAdapter, NodeTuple, EdgeTuple
 
@@ -79,12 +80,19 @@ class PhenotypeAdapter(BaseAdapter):
             label=self.layer_name,
         )
 
-    def _raw_edges(self) -> Generator[EdgeTuple, None, None]:
+    def _raw_edges(self):
         df = self._read(self._EDGE_FILE).dropna(subset=["gene_symbol", "mp_top_id"])
-        self.logger.debug("Phenotype edges to emit: %d", len(df))
+        has_hp_ids = "source_hp_ids"        in df.columns
+        has_dist   = "min_hp_to_anchor_dist" in df.columns
+
         for r in df.itertuples(index=False):
             gene_id = f"{self._ID_PREFIX}{r.gene_symbol}" if self._ID_PREFIX else r.gene_symbol
-            yield (gene_id, r.mp_top_id, self._EDGE_LABEL, {})
+            props: dict = {"derived": True}
+            if has_hp_ids and getattr(r, "source_hp_ids", None):
+                props["source_hp_ids"] = str(r.source_hp_ids).split("|")
+            if has_dist and pd.notna(getattr(r, "min_hp_to_anchor_dist", None)):
+                props["min_hp_to_anchor_distance"] = int(r.min_hp_to_anchor_dist)
+            yield (gene_id, r.mp_top_id, self._EDGE_LABEL, props)
 
 
 class HumanPhenotypeAdapter(PhenotypeAdapter):

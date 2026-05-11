@@ -1,4 +1,6 @@
-"""src/adapters/base.py - shared base class for all layer adapters."""
+"""
+src/adapters/base.py - shared base class for all layer adapters.
+"""
 
 from __future__ import annotations
 
@@ -14,7 +16,8 @@ EdgeTuple = tuple[str, str, str, dict]   # (source_id, target_id, label, propert
 
 
 class BaseAdapter:
-    """Base class for all layer adapters.
+    """
+    Base class for all layer adapters.
 
     Provides:
       - _read()            — read a TSV from data_dir into a DataFrame
@@ -27,16 +30,8 @@ class BaseAdapter:
       - Implement get_nodes() and/or get_edges()
       - Accept __init__(self, data_dir) with no other required arguments
         so that build_graph.py can instantiate all adapters uniformly.
-
-    Adding a new layer
-    ------------------
-    1. Create src/layers/<name>/adapter.py with a class inheriting BaseAdapter.
-    2. Set layer_name = "<name>" as a class attribute.
-    3. Register the class in src/pipeline/build_graph.py → SPECIES_LAYERS.
-    4. Add the schema section to config/schema_config_<species>.yaml.
     """
 
-    #: Stable, lowercase identifier for this layer.  Override in every subclass.
     layer_name: str = ""
 
     def __init__(self, data_dir: str | Path):
@@ -64,7 +59,8 @@ class BaseAdapter:
     def _unique_nodes(
         tuples: Iterator[NodeTuple],
     ) -> Generator[NodeTuple, None, None]:
-        """Yield node tuples, skipping duplicates by id.
+        """
+        Yield node tuples, skipping duplicates by id.
 
         Always pass a lazy iterator (e.g. itertools.chain), not a materialised
         tuple/list — unpacking generators with (*gen1, *gen2) loads everything
@@ -83,11 +79,8 @@ class BaseAdapter:
         gen: Iterator[NodeTuple],
         label: str = "",
     ) -> Generator[NodeTuple, None, None]:
-        """Wrap a node generator, logging a count summary when it is exhausted.
-
-        Args:
-            gen:   Source node generator.
-            label: Human-readable label for the log message (e.g. "human gene").
+        """
+        Wrap a node generator, logging a count summary when it is exhausted.
         """
         counts: dict[str, int] = {}
         for node_id, node_label, props in gen:
@@ -106,11 +99,8 @@ class BaseAdapter:
         gen: Iterator[EdgeTuple],
         label: str = "",
     ) -> Generator[EdgeTuple, None, None]:
-        """Wrap an edge generator, logging a count summary when it is exhausted.
-
-        Args:
-            gen:   Source edge generator.
-            label: Human-readable label for the log message (e.g. "expression").
+        """
+        Wrap an edge generator, logging a count summary when it is exhausted.
         """
         counts: dict[str, int] = {}
         for src, tgt, edge_label, props in gen:
@@ -128,7 +118,9 @@ class BaseAdapter:
 
     @staticmethod
     def _sanitize(value: str) -> str:
-        """Remove single quotes that break neo4j-admin CSV import (quote char = ')."""
+        """
+        Remove single quotes that break neo4j-admin CSV import (quote char = ').
+        """
         return value.replace("'", "")
 
     # ── Default no-op generators ───────────────────────────────────── #

@@ -1,23 +1,8 @@
 """uberon_adapter.py - Uberon anatomical ontology adapter for the gene-phenotype KG.
 
 Reads the two TSV files produced by uberon_export.py and yields:
-
-Nodes
------
-  uberon term   — one per Uberon anatomical term referenced by a GTEx tissue
-
-Edges
------
-  tissue mapped to uberon — GTEx tissue  →  Uberon term
-
-Species support
----------------
-Uberon is a cross-species ontology, so the tissue→uberon mapping is shared
-between human and mouse.  For consistency with the rest of the codebase,
-separate HumanUberonAdapter and MouseUberonAdapter classes are provided so
-that the layer can be toggled independently per species in build_graph.py.
-Both classes read the same shared TSV files (there is no human/mouse split
-in the source data for this layer).
+  Nodes : uberon term — one per Uberon anatomical term referenced by a GTEx tissue
+  Edges : tissue mapped to uberon — GTEx tissue → Uberon term
 """
 
 from __future__ import annotations
@@ -149,13 +134,7 @@ class UberonAdapter(BaseAdapter):
 # ── Species-specific subclasses ───────────────────────────────────────────── #
 
 class HumanUberonAdapter(UberonAdapter):
-    """Uberon anatomical ontology adapter for the human graph.
-
-    Both human and mouse use the same curated GTEx→Uberon mapping,
-    so this class reads the same shared TSV files as MouseUberonAdapter.
-    It is kept as a separate class to allow independent toggling in
-    SPECIES_LAYERS and consistent layer_name attribution in logs.
-    """
+    """Uberon adapter for the human graph; reads the same shared TSV files as MouseUberonAdapter."""
     layer_name = "uberon"
 
 

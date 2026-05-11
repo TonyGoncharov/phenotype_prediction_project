@@ -85,7 +85,6 @@ class HumanExpressionAdapter(BaseAdapter):
                     })
                 return
 
-        # Fallback: derive from edge file
         self.logger.debug("Tissue node file absent — deriving tissue nodes from edge file")
         edge_df = self._read(self._EDGE_FILE)
         tissue_df = edge_df[["tissue_id", "tissue_name"]].drop_duplicates(subset=["tissue_id"])

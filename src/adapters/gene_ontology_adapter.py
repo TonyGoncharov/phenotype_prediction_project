@@ -65,7 +65,6 @@ class GOAdapter(BaseAdapter):
             })
 
     def _go_term_nodes(self) -> Generator[NodeTuple, None, None]:
-        """Yield one GoTerm node per unique GO ID."""
         go_df = self._read(self._GENE_GO_FILE)
         aspect_df = go_df[["go_id", "aspect"]].drop_duplicates().dropna()
         go_id_to_ns: dict[str, str] = {
@@ -125,7 +124,6 @@ class GOAdapter(BaseAdapter):
 # ── Species-specific subclasses ────────────────────────────────────── #
 
 class HumanGOAdapter(GOAdapter):
-    """GO annotation adapter for the human graph."""
     layer_name    = "go"
     _GENE_GO_FILE = "edge_human_gene_has_go.tsv"
     _GENE_LABEL   = "human gene"
@@ -135,7 +133,6 @@ class HumanGOAdapter(GOAdapter):
 
 
 class MouseGOAdapter(GOAdapter):
-    """GO annotation adapter for the mouse graph."""
     layer_name    = "go"
     _GENE_GO_FILE = "edge_mouse_gene_has_go.tsv"
     _GENE_LABEL   = "mouse gene"
