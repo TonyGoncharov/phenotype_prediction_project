@@ -13,6 +13,19 @@ Usage
 
     # Single condition
     uv run python -m src.pykeen.ablation_study --conditions all pheno_only
+
+Test-set integrity
+------------------
+A fixed gene→MP test set is computed once from the full graph (seed=42).
+Each condition's TriplesFactory is built by:
+  1. Loading the condition's triples.
+  2. Pre-assigning the fixed test pairs to the test fold.
+  3. Splitting the remainder into train / val at the original 80:10 ratio.
+
+This prevents the contamination that arises when every condition does an
+independent random split: because entity→integer mappings differ across
+conditions, the same seed produces different folds, and some test pairs
+leak into a condition's training set (worst case: pheno_only).
 """
 
 from __future__ import annotations
@@ -22,6 +35,7 @@ import json
 import logging
 from pathlib import Path
 
+import torch
 import pandas as pd
 from pykeen.triples import TriplesFactory
 
@@ -36,16 +50,12 @@ logger = logging.getLogger(__name__)
 
 # ── Relation groups ───────────────────────────────────────────────────────────
 
-_PHENO = {"HumanGeneHasMpTopTerm"}
+_PHENO = {GENE_PHENOTYPE_RELATION}           # was: {"HumanGeneHasMpTopTerm"}
 _GO    = {"HumanGeneHasGoTerm"}
-# TissueMappedToUberon ties tissue nodes to the Uberon hierarchy;
-# grouped with expression since both are absent when GTEx data is excluded.
 _EXPR  = {"HumanGeneExpressedInTissue", "TissueMappedToUberon"}
 _PPI   = {"HumanGeneEncodesProtein", "HumanProteinInteractsWith"}
 
 # ── Ablation conditions ───────────────────────────────────────────────────────
-# include_relations=None  →  all relations present in the graph.
-# An explicit set restricts training to those relation types only.
 
 CONDITIONS: dict[str, set[str] | None] = {
     "all":        None,
@@ -61,6 +71,100 @@ _FAST_OVERRIDE = {
     "num_negs_per_pos": 32,
     "batch_size":       1024,
 }
+
+
+# ── Contamination-safe split ──────────────────────────────────────────────────
+
+def _make_condition_splits(
+    data_dir:          str | Path,
+    include_relations: set[str] | None,
+    locked_test_pairs: dict[str, set[str]],
+    train_frac:        float = DEFAULT_CONFIG["train_frac"],
+    val_frac:          float = DEFAULT_CONFIG["val_frac"],
+    seed:              int   = DEFAULT_CONFIG["random_seed"],
+) -> tuple[TriplesFactory, TriplesFactory, TriplesFactory]:
+    """Return (train_tf, val_tf, test_tf) with zero contamination.
+
+    Gene→MP pairs that appear in *locked_test_pairs* are pre-assigned to the
+    test fold and never seen during training, regardless of the condition's
+    entity-to-integer mapping.
+
+    Parameters
+    ----------
+    locked_test_pairs:
+        mp_term_id → {gene_id, …}  — the canonical test positives from the
+        full-graph split (output of ``_get_fixed_test_positives``).
+    """
+    tf = build_triples_factory(data_dir, include_relations=include_relations)
+    rel_id = tf.relation_to_id.get(GENE_PHENOTYPE_RELATION)
+
+    if rel_id is None:
+        # This condition has no G→P relation at all (shouldn't happen in
+        # practice, but be safe).  Fall through to a standard split so
+        # training can still run.
+        logger.warning(
+            "'%s' absent from condition — falling back to standard split",
+            GENE_PHENOTYPE_RELATION,
+        )
+        return split_triples_factory(tf, train_frac, val_frac, seed)
+
+    id_to_entity: dict[int, str] = {v: k for k, v in tf.entity_to_id.items()}
+
+    # ── Find which triples in this TriplesFactory are locked test pairs ───────
+    locked_mask = torch.zeros(tf.num_triples, dtype=torch.bool)
+    for i, (h, r, t) in enumerate(tf.mapped_triples.tolist()):
+        if r == rel_id:
+            gene   = id_to_entity.get(h, "")
+            mp_trm = id_to_entity.get(t, "")
+            if mp_trm in locked_test_pairs and gene in locked_test_pairs[mp_trm]:
+                locked_mask[i] = True
+
+    n_locked = int(locked_mask.sum().item())
+    logger.info(
+        "Condition split: %d / %d G→P triples locked into test fold",
+        n_locked, int((tf.mapped_triples[:, 1] == rel_id).sum().item()),
+    )
+
+    if n_locked == 0:
+        # None of the fixed test pairs are present in this condition (e.g.
+        # all G→P edges were filtered).  Standard split is safe.
+        logger.warning(
+            "No locked test pairs found in this condition — standard split used."
+        )
+        return split_triples_factory(tf, train_frac, val_frac, seed)
+
+    # ── Partition: locked → test, remainder → train + val ────────────────────
+    locked_triples    = tf.mapped_triples[locked_mask]
+    remainder_triples = tf.mapped_triples[~locked_mask]
+
+    # Reconstruct TriplesFactory for the remainder, preserving the shared
+    # entity/relation vocabulary so embeddings are compatible across conditions.
+    remainder_tf = TriplesFactory(
+        mapped_triples=remainder_triples,
+        entity_to_id=tf.entity_to_id,
+        relation_to_id=tf.relation_to_id,
+    )
+
+    # Split remainder into train / val at the original ratio.
+    # Pass a single ratio < 1.0 so PyKEEN returns exactly two splits.
+    adj_train_ratio = train_frac / (train_frac + val_frac)   # e.g. 0.8/0.9 ≈ 0.889
+    train_tf, val_tf = remainder_tf.split(
+        ratios=[adj_train_ratio],
+        random_state=seed,
+    )
+
+    # Test factory from locked triples — same shared vocabulary.
+    test_tf = TriplesFactory(
+        mapped_triples=locked_triples,
+        entity_to_id=tf.entity_to_id,
+        relation_to_id=tf.relation_to_id,
+    )
+
+    logger.info(
+        "Contamination-safe split — train: %d  val: %d  test: %d",
+        train_tf.num_triples, val_tf.num_triples, test_tf.num_triples,
+    )
+    return train_tf, val_tf, test_tf
 
 
 # ── Core logic ────────────────────────────────────────────────────────────────
@@ -112,19 +216,20 @@ def _get_fixed_test_positives(
 
 
 def run_ablation(
-    data_dir:   str | Path = "biocypher_out/human/",
-    out_dir:    str | Path = "pykeen_out/ablation/",
+    data_dir: str | Path = "biocypher_out/human/",
+    out_dir:  str | Path = "pykeen_out/ablation/",
     conditions: dict[str, set[str] | None] | None = None,
-    fast:       bool = False,
-    model:      str  = "RotatE",
+    fast: bool = False,
 ) -> pd.DataFrame:
     """Train and evaluate one model per ablation condition.
 
     Returns a DataFrame with one row per condition (suitable for plotting).
-    Also writes <out_dir>/<model>/comparison_summary.csv.
+    Also writes <out_dir>/comparison_summary.csv.
 
     All conditions share the same fixed gene→phenotype test set (derived from
     the full-graph split) so that AUPRC values are directly comparable.
+    Contamination is prevented by pre-assigning the locked test pairs to each
+    condition's test fold before training (see ``_make_condition_splits``).
 
     Note on MRR/Hits@K: these metrics rank against *all entities in each
     condition's graph*, so the candidate pool differs across conditions
@@ -134,8 +239,7 @@ def run_ablation(
     """
     conditions = conditions or CONDITIONS
     out_path   = Path(out_dir)
-    model_path = out_path / model
-    model_path.mkdir(parents=True, exist_ok=True)
+    out_path.mkdir(parents=True, exist_ok=True)
 
     # ── Compute fixed test positives ONCE from the full graph ─────────────────
     fixed_positives = _get_fixed_test_positives(data_dir)
@@ -143,7 +247,7 @@ def run_ablation(
     rows: list[dict] = []
 
     for name, rels in conditions.items():
-        cond_dir  = model_path / name
+        cond_dir  = out_path / name
         rels_desc = "all" if rels is None else "|".join(sorted(rels))
 
         logger.info("=" * 60)
@@ -152,8 +256,28 @@ def run_ablation(
         logger.info("=" * 60)
 
         try:
-            cfg = {**(fast and _FAST_OVERRIDE or {}), "include_relations": rels, "model": model}
-            summary = run_training(data_dir=str(data_dir), out_dir=cond_dir, config=cfg)
+            cfg = {**(fast and _FAST_OVERRIDE or {}), "include_relations": rels}
+
+            # ── Contamination-safe splits ─────────────────────────────────────
+            # Each condition's test fold is locked to exactly the full-graph
+            # test pairs; the remainder is split train/val at the adjusted ratio.
+            train_tf, val_tf, test_tf = _make_condition_splits(
+                data_dir=data_dir,
+                include_relations=rels,
+                locked_test_pairs=fixed_positives,
+                train_frac=DEFAULT_CONFIG["train_frac"],
+                val_frac=DEFAULT_CONFIG["val_frac"],
+                seed=DEFAULT_CONFIG["random_seed"],
+            )
+
+            summary = run_training(
+                data_dir=str(data_dir),
+                out_dir=cond_dir,
+                config=cfg,
+                train_tf=train_tf,
+                val_tf=val_tf,
+                test_tf=test_tf,
+            )
             _patch_summary(cond_dir, summary)
 
             auprc_result = _run_auprc(cond_dir, fixed_positives=fixed_positives)
@@ -164,7 +288,6 @@ def run_ablation(
             continue
 
         m = summary.get("metrics", {})
-        gp = summary.get("gp_metrics", {})
         rows.append({
             "condition":     name,
             "relations":     rels_desc,
@@ -174,12 +297,6 @@ def run_ablation(
             "hits_at_1":     m.get("hits_at_1"),
             "hits_at_3":     m.get("hits_at_3"),
             "hits_at_10":    m.get("hits_at_10"),
-            # 24-way tail-only metrics — directly comparable across conditions
-            "gp_mrr":        gp.get("gp_mrr"),
-            "gp_hits_at_1":  gp.get("gp_hits_at_1"),
-            "gp_hits_at_3":  gp.get("gp_hits_at_3"),
-            "gp_hits_at_10": gp.get("gp_hits_at_10"),
-            "gp_n_candidates": gp.get("gp_n_candidates"),
         })
         logger.info(
             "Done — AUPRC=%.4f  MRR=%.4f  Hits@10=%.4f",
@@ -189,7 +306,7 @@ def run_ablation(
         )
 
     df = pd.DataFrame(rows)
-    csv_path = model_path / "comparison_summary.csv"
+    csv_path = out_path / "comparison_summary.csv"
     df.to_csv(csv_path, index=False)
     logger.info("Comparison summary → %s", csv_path)
     return df
@@ -201,11 +318,7 @@ def _run_auprc(
     cond_dir: Path,
     fixed_positives: "dict[str, set[str]] | None" = None,
 ) -> dict:
-    """Load test_triples, compute AUPRC, write per-class CSV, patch summary.json.
-
-    If *fixed_positives* is provided it is forwarded to evaluate_auprc so that
-    all conditions are scored against the same canonical test set.
-    """
+    """Load test_triples, compute AUPRC, write per-class CSV, patch summary.json."""
     test_tf_path = cond_dir / "test_triples"
     if not test_tf_path.exists():
         logger.warning("test_triples/ not found in %s — AUPRC skipped", cond_dir)
@@ -228,8 +341,6 @@ def _run_auprc(
 
 
 def _patch_summary(cond_dir: Path, summary: dict) -> None:
-    """Write summary dict to <cond_dir>/summary.json (run_training already does this,
-    but we overwrite to ensure include_relations is recorded)."""
     sp = cond_dir / "summary.json"
     if sp.exists():
         sp.write_text(json.dumps(summary, indent=2, default=str))
@@ -245,9 +356,7 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--data-dir", default="biocypher_out/human/",
                    help="BioCypher output directory.")
     p.add_argument("--out-dir",  default="pykeen_out/ablation/",
-                   help="Root output dir. Results go to <out-dir>/<model>/<condition>/.")
-    p.add_argument("--model", default="RotatE",
-                   help="PyKEEN model name (e.g. RotatE, ComplEx). Default: RotatE.")
+                   help="Root output dir; each condition gets a subdirectory.")
     p.add_argument("--fast", action="store_true",
                    help="Smoke-test preset (dim=64, epochs=30). ~10 min per condition on CPU.")
     p.add_argument("--conditions", nargs="+", default=None,
@@ -259,7 +368,6 @@ def _parse_args() -> argparse.Namespace:
 if __name__ == "__main__":
     args = _parse_args()
 
-    # Console + file logging; log file goes next to comparison_summary.csv.
     setup_logging(
         out_dir=Path(args.out_dir),
         log_filename="ablation.log",
@@ -274,26 +382,11 @@ if __name__ == "__main__":
         out_dir=args.out_dir,
         conditions=selected,
         fast=args.fast,
-        model=args.model,
     )
 
     print("\n" + "=" * 70)
     print("ABLATION SUMMARY")
     print("=" * 70)
-
-    # Primary metrics (AUPRC fixed test set; gp_* 24-way comparable ranking)
-    primary_cols = [
-        "condition", "mean_auprc",
-        "gp_mrr", "gp_hits_at_1", "gp_hits_at_3", "gp_hits_at_10",
-    ]
-    print("\n── Primary metrics (fixed test set / 24-way) ──")
-    print(df[[c for c in primary_cols if c in df.columns]].to_string(
-        index=False, float_format="%.4f"))
-
-    # Standard KGE metrics (informational; NOT comparable across conditions)
-    kge_cols = ["condition", "mrr", "hits_at_1", "hits_at_3", "hits_at_10"]
-    print("\n── Standard KGE metrics (entity space differs — not directly comparable) ──")
-    print(df[[c for c in kge_cols if c in df.columns]].to_string(
-        index=False, float_format="%.4f"))
-
+    cols = ["condition", "mean_auprc", "mrr", "hits_at_1", "hits_at_3", "hits_at_10"]
+    print(df[[c for c in cols if c in df.columns]].to_string(index=False, float_format="%.4f"))
     print("=" * 70)

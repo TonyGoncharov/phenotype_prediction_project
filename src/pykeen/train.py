@@ -67,34 +67,66 @@ def run_training(
     config:    dict | None = None,
     device:    str = "auto",
     cache_dir: str | Path | None = None,
+    # Optional pre-computed splits.  When all three are supplied the function
+    # skips data loading and splitting entirely.  Used by the ablation study
+    # to enforce a fixed test set across conditions (prevents contamination).
+    train_tf:  TriplesFactory | None = None,
+    val_tf:    TriplesFactory | None = None,
+    test_tf:   TriplesFactory | None = None,
 ) -> dict:
     """Full RotatE training + evaluation run.
 
-    Returns a summary dict (config + MRR/Hits@K metrics) also written to <out_dir>/summary.json.
+    Returns a summary dict (config + MRR/Hits@K metrics) also written to
+    <out_dir>/summary.json.
+
+    Pre-split mode
+    --------------
+    Pass *train_tf*, *val_tf*, and *test_tf* to bypass the internal
+    load-and-split step.  All three must be provided together.
+    This is used by the ablation study to guarantee that every condition is
+    evaluated against the same fixed test positives (no contamination from
+    per-condition random splits).
     """
     cfg = {**DEFAULT_CONFIG, **(config or {})}
     include_relations = cfg.pop("include_relations", None)
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    pre_split = train_tf is not None and val_tf is not None and test_tf is not None
+
     # ── 1. Load and split data ────────────────────────────────────────────────
     logger.info("=" * 60)
-    logger.info("Step 1/3 — Loading triples from %s", data_dir)
+    if pre_split:
+        logger.info("Step 1/3 — Using pre-computed splits (contamination-safe)")
+        logger.info(
+            "  train: %d  val: %d  test: %d (locked G→P pairs)",
+            train_tf.num_triples, val_tf.num_triples, test_tf.num_triples,
+        )
+        # Derive total entity/relation counts from the shared vocabulary.
+        # All three factories share the same entity_to_id / relation_to_id.
+        _num_entities   = train_tf.num_entities
+        _num_relations  = train_tf.num_relations
+        _num_triples    = train_tf.num_triples + val_tf.num_triples + test_tf.num_triples
+    else:
+        logger.info("Step 1/3 — Loading triples from %s", data_dir)
+        logger.info("=" * 60)
+        tf = build_triples_factory(
+            data_dir,
+            include_relations=include_relations,
+            cache_dir=cache_dir,
+        )
+        train_tf, val_tf, test_tf = split_triples_factory(
+            tf,
+            train_frac=cfg["train_frac"],
+            val_frac=cfg["val_frac"],
+            seed=cfg["random_seed"],
+        )
+        _num_entities  = tf.num_entities
+        _num_relations = tf.num_relations
+        _num_triples   = tf.num_triples
+
     logger.info("=" * 60)
-
-    tf = build_triples_factory(
-        data_dir,
-        include_relations=include_relations,
-        cache_dir=cache_dir,
-    )
-    train_tf, val_tf, test_tf = split_triples_factory(
-        tf,
-        train_frac=cfg["train_frac"],
-        val_frac=cfg["val_frac"],
-        seed=cfg["random_seed"],
-    )
-
-    _report_relation_split(tf, train_tf, val_tf, test_tf)
+    _report_relation_split(train_tf, train_tf, val_tf, test_tf)
 
     # ── 2. Resolve device ────────────────────────────────────────────────────
     if device == "auto":
@@ -190,8 +222,6 @@ def run_training(
     logger.info("Saved PyKEEN pipeline result to: %s", out_dir)
 
     # ── 4b. 24-way G→P ranking evaluation ────────────────────────────────────
-    # Separate pass restricted to the ~24 MP top-terms as tail candidates.
-    # Makes MRR/Hits@K comparable across ablation conditions (constant pool size).
     gp_metrics = _evaluate_gp_ranking(
         model=result.model,
         train_tf=train_tf,
@@ -206,27 +236,23 @@ def run_training(
         "model": cfg["model"],
         "device": device,
         "include_relations": sorted(include_relations) if include_relations else None,
+        "pre_split": pre_split,
         "graph": {
-            "num_entities": tf.num_entities,
-            "num_relations": tf.num_relations,
-            "num_triples_total": tf.num_triples,
+            "num_entities":      _num_entities,
+            "num_relations":     _num_relations,
+            "num_triples_total": _num_triples,
             "num_triples_train": train_tf.num_triples,
             "num_triples_val":   val_tf.num_triples,
             "num_triples_test":  test_tf.num_triples,
         },
         "config": cfg,
         "metrics": {
-            # 'both' sides, 'realistic' rank type — standard KGE evaluation protocol.
-            # Key format: PyKEEN dot-notation (side.rank_type.metric or just metric).
             "hits_at_1":  _safe_metric(result, "hits@1"),
             "hits_at_3":  _safe_metric(result, "hits@3"),
             "hits_at_10": _safe_metric(result, "hits@10"),
             "mrr": _safe_metric(result, "inverse_harmonic_mean_rank"),
             "mr":  _safe_metric(result, "mean_rank"),
         },
-        # 24-way tail-only ranking: candidates restricted to the MP top-terms seen
-        # in training (~24 entities).  Directly comparable across ablation conditions
-        # because the candidate pool is constant regardless of total entity count.
         "gp_metrics": gp_metrics,
     }
 
@@ -294,7 +320,6 @@ def _evaluate_gp_ranking(
         return {}
 
     # ── Candidate set: MP top-terms present in training ───────────────────────
-    # Using training IDs ensures no cold-start MP terms sneak into the pool.
     rel_id_train = train_tf.relation_to_id.get(GENE_PHENOTYPE_RELATION)
     if rel_id_train is not None:
         train_gp_mask = train_tf.mapped_triples[:, 1] == rel_id_train
@@ -329,7 +354,6 @@ def _evaluate_gp_ranking(
         return {}
 
     def _get(primary: str, fallback: str | None = None) -> float | None:
-        """Extract metric with optional fallback key for PyKEEN version compat."""
         try:
             return float(eval_result.get_metric(primary))
         except Exception:
@@ -341,8 +365,6 @@ def _evaluate_gp_ranking(
                 pass
         return None
 
-    # Tail-side dot-notation: "tail.realistic.<metric>"
-    # Fallback to unprefixed key for older PyKEEN builds.
     metrics: dict = {
         "gp_mrr":          _get("tail.realistic.inverse_harmonic_mean_rank",
                                 "inverse_harmonic_mean_rank"),
@@ -357,12 +379,6 @@ def _evaluate_gp_ranking(
 
 
 def _safe_metric(result, key: str) -> float | None:
-    """Extract a scalar metric from a PyKEEN PipelineResult.
-
-    Uses result.get_metric() — the stable API since PyKEEN 1.10.
-    Key follows PyKEEN dot-notation, e.g. 'hits@10', 'mean_rank',
-    'inverse_harmonic_mean_rank'.  Defaults to both-sides / realistic.
-    """
     try:
         return float(result.get_metric(key))
     except Exception:
@@ -380,7 +396,6 @@ def _report_relation_split(
     rel_id = full_tf.relation_to_id[GENE_PHENOTYPE_RELATION]
 
     def _count(tf: TriplesFactory) -> int:
-        # mapped_triples is a (N,3) int tensor: [head_id, relation_id, tail_id]
         return int((tf.mapped_triples[:, 1] == rel_id).sum().item())
 
     logger.info(
@@ -427,13 +442,11 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument(
         "--fast", action="store_true",
         help="Smoke-test preset: dim=64, epochs=30, negs=32, batch=1024. "
-             "Completes in ~10 min on CPU. Verify the pipeline before a full run.",
+             "Completes in ~10 min on CPU.",
     )
     p.add_argument(
         "--cache-dir", default=None,
-        help="Directory for caching the TriplesFactory binary. "
-             "Skips CSV parsing on subsequent runs with the same data. "
-             "Cache is invalidated automatically when source CSVs change.",
+        help="Directory for caching the TriplesFactory binary.",
     )
     return p.parse_args()
 

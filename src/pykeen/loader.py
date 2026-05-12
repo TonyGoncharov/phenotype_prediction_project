@@ -165,11 +165,20 @@ def load_triples(
 def _tf_cache_key(
     include_relations: Optional[set[str]],
     create_inverse_triples: bool,
+    source_files: frozenset[str] = frozenset(),
 ) -> str:
-    """Short deterministic key encoding the loader parameters."""
+    """Short deterministic key encoding the loader parameters and source file set.
+
+    *source_files* is the set of CSV filenames in the source directory — including
+    it ensures the cache is invalidated when new files are added, not only when
+    existing files are modified.
+    """
     payload = json.dumps(
-        {"rels": sorted(include_relations) if include_relations else None,
-         "inv": create_inverse_triples},
+        {
+            "rels":  sorted(include_relations) if include_relations else None,
+            "inv":   create_inverse_triples,
+            "files": sorted(source_files),
+        },
         sort_keys=True,
     )
     return hashlib.md5(payload.encode()).hexdigest()[:10]
@@ -196,14 +205,16 @@ def build_triples_factory(
     can improve tail prediction quality at the cost of doubling the triple count.
 
     cache_dir persists the TriplesFactory as a binary and reloads it on subsequent
-    calls; invalidated automatically when any source CSV is newer than the cache.
+    calls; invalidated automatically when any source CSV is newer than the cache or
+    when the set of CSV files in bc_dir changes (files added or removed).
     """
     bc_dir = Path(bc_dir)
 
     if cache_dir is not None:
         cache_dir = Path(cache_dir)
         cache_dir.mkdir(parents=True, exist_ok=True)
-        key = _tf_cache_key(include_relations, create_inverse_triples)
+        source_files = frozenset(f.name for f in bc_dir.glob("*.csv"))
+        key = _tf_cache_key(include_relations, create_inverse_triples, source_files)
         cache_path = cache_dir / f"tf_{key}"
         if _cache_is_fresh(cache_path, bc_dir):
             logger.info("Loading TriplesFactory from cache: %s", cache_path)
