@@ -133,9 +133,10 @@ def build_species(
 
     # ── Edge writing ─────────────────────────────────────────────────
     def _all_edges():
-        for name, adapter in active_adapters:
-            logger.debug("Collecting edges from layer: %s", name)
-            yield from adapter.get_edges()
+        all_gen = itertools.chain.from_iterable(
+            adapter.get_edges() for _, adapter in active_adapters
+        )
+        yield from BaseAdapter._unique_edges(all_gen)
 
     logger.info("Writing edges...")
     t0 = time.perf_counter()
