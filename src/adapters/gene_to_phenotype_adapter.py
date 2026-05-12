@@ -48,15 +48,7 @@ class PhenotypeAdapter(BaseAdapter):
         yield from self._mp_top_term_nodes()
 
     def _gene_nodes(self) -> Generator[NodeTuple, None, None]:
-        df = self._read(self._EDGE_FILE)
-        unique_genes = df["gene_symbol"].dropna().unique()
-        self.logger.debug("Gene nodes to emit: %d", len(unique_genes))
-        for symbol in unique_genes:
-            node_id = f"{self._ID_PREFIX}{symbol}" if self._ID_PREFIX else symbol
-            yield (node_id, self._GENE_LABEL, {
-                "symbol": symbol,
-                "organism": self._ORGANISM,
-            })
+        yield from self._gene_nodes_from_tsv(self._EDGE_FILE)
 
     def _mp_top_term_nodes(self) -> Generator[NodeTuple, None, None]:
         df = self._read(self._EDGE_FILE)

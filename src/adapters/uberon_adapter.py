@@ -65,8 +65,7 @@ class UberonAdapter(BaseAdapter):
 
     def _uberon_term_nodes(self) -> Generator[NodeTuple, None, None]:
         df = self._read(self._UBERON_NODE_FILE)
-        if df.empty:
-            self.logger.warning("Uberon node file is empty.")
+        if self._check_empty_df(df, "Uberon node"):
             return
 
         self.logger.debug("Uberon term nodes to emit: %d", len(df))
@@ -101,8 +100,7 @@ class UberonAdapter(BaseAdapter):
 
     def _tissue_to_uberon_edges(self) -> Generator[EdgeTuple, None, None]:
         df = self._read(self._UBERON_EDGE_FILE)
-        if df.empty:
-            self.logger.warning("Uberon edge file is empty.")
+        if self._check_empty_df(df, "Uberon edge"):
             return
 
         required = {"gtex_tissue_id", "uberon_id"}

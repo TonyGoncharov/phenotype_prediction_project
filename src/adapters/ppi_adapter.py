@@ -48,17 +48,17 @@ class HumanPPIAdapter(BaseAdapter):
     """
 
     layer_name = "ppi"
-    _REQUIRED_FILES: list[str] = [_PROTEIN_NODES_FILE, _GENE_ENCODES_FILE, _PPI_EDGES_FILE]
+    REQUIRED_FILES: list[str] = [_PROTEIN_NODES_FILE, _GENE_ENCODES_FILE, _PPI_EDGES_FILE]
 
     def __init__(self, data_dir):
         super().__init__(data_dir)
-        missing = [f for f in self._REQUIRED_FILES if not (self.data_dir / f).exists()]
+        missing = [f for f in self.REQUIRED_FILES if not (self.data_dir / f).exists()]
         if missing:
             raise FileNotFoundError(
                 f"PPI layer: missing TSV files in {self.data_dir}:\n  "
                 + "\n  ".join(missing)
             )
-        self.logger.debug("PPI files ready: %s", ", ".join(self._REQUIRED_FILES))
+        self.logger.debug("PPI files ready: %s", ", ".join(self.REQUIRED_FILES))
 
     # ── Nodes ──────────────────────────────────────────────────────────
 
@@ -67,8 +67,7 @@ class HumanPPIAdapter(BaseAdapter):
 
     def _protein_nodes(self) -> Generator[NodeTuple, None, None]:
         df = self._read(_PROTEIN_NODES_FILE)
-        if df.empty:
-            self.logger.warning("Protein node file is empty.")
+        if self._check_empty_df(df, "Protein node"):
             return
         self.logger.debug("Protein nodes to emit: %d", len(df))
         for row in df.itertuples(index=False):
@@ -92,8 +91,7 @@ class HumanPPIAdapter(BaseAdapter):
 
     def _gene_encodes_edges(self) -> Generator[EdgeTuple, None, None]:
         df = self._read(_GENE_ENCODES_FILE)
-        if df.empty:
-            self.logger.warning("Gene-encodes-protein file is empty.")
+        if self._check_empty_df(df, "Gene-encodes-protein"):
             return
         self.logger.debug("Gene→Protein edges to emit: %d", len(df))
         for row in df.itertuples(index=False):
@@ -107,8 +105,7 @@ class HumanPPIAdapter(BaseAdapter):
 
     def _ppi_edges(self) -> Generator[EdgeTuple, None, None]:
         df = self._read(_PPI_EDGES_FILE)
-        if df.empty:
-            self.logger.warning("PPI edge file is empty.")
+        if self._check_empty_df(df, "PPI edge"):
             return
         self.logger.debug("PPI edges to emit: %d", len(df))
 

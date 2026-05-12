@@ -58,14 +58,7 @@ class HumanExpressionAdapter(BaseAdapter):
         yield from self._tissue_nodes()
 
     def _gene_nodes(self) -> Generator[NodeTuple, None, None]:
-        df = self._read(self._EDGE_FILE)
-        unique_genes = df["gene_symbol"].dropna().unique()
-        self.logger.debug("Gene nodes to emit: %d", len(unique_genes))
-        for symbol in unique_genes:
-            yield (f"{self._ID_PREFIX}{symbol}", self._GENE_LABEL, {
-                "symbol": symbol,
-                "organism": self._ORGANISM,
-            })
+        yield from self._gene_nodes_from_tsv(self._EDGE_FILE)
 
     def _tissue_nodes(self) -> Generator[NodeTuple, None, None]:
         """Yield one Tissue node per unique GTEx tissue.

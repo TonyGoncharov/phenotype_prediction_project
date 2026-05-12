@@ -26,6 +26,7 @@ class GOAdapter(BaseAdapter):
     _EDGE_LABEL: str = ""
     _ID_PREFIX: str = ""
     _ORGANISM: str = ""
+    REQUIRED_FILES: list[str] = []
 
     def __init__(self, data_dir):
         super().__init__(data_dir)
@@ -34,12 +35,13 @@ class GOAdapter(BaseAdapter):
                 f"{type(self).__name__} must not be instantiated directly — "
                 "use HumanGOAdapter or MouseGOAdapter."
             )
-        if not (self.data_dir / self._GENE_GO_FILE).exists():
+        missing = [f for f in self.REQUIRED_FILES if not (self.data_dir / f).exists()]
+        if missing:
             raise FileNotFoundError(
-                f"GO layer: {self._GENE_GO_FILE} not found in {self.data_dir}.\n"
-                "Run the GO export step first."
+                f"GO layer: missing TSV files in {self.data_dir}:\n  "
+                + "\n  ".join(missing)
             )
-        self.logger.debug("GO annotation file found: %s", self._GENE_GO_FILE)
+        self.logger.debug("GO files ready: %s", ", ".join(self.REQUIRED_FILES))
 
     # ── Nodes ──────────────────────────────────────────────────────── #
 
@@ -54,15 +56,7 @@ class GOAdapter(BaseAdapter):
         yield from self._go_term_nodes()
 
     def _gene_nodes(self) -> Generator[NodeTuple, None, None]:
-        df = self._read(self._GENE_GO_FILE)
-        unique_genes = df["gene_symbol"].dropna().unique()
-        self.logger.debug("Gene nodes to emit: %d", len(unique_genes))
-        for symbol in unique_genes:
-            node_id = f"{self._ID_PREFIX}{symbol}" if self._ID_PREFIX else symbol
-            yield (node_id, self._GENE_LABEL, {
-                "symbol": symbol,
-                "organism": self._ORGANISM,
-            })
+        yield from self._gene_nodes_from_tsv(self._GENE_GO_FILE)
 
     def _go_term_nodes(self) -> Generator[NodeTuple, None, None]:
         go_df = self._read(self._GENE_GO_FILE)
@@ -124,18 +118,20 @@ class GOAdapter(BaseAdapter):
 # ── Species-specific subclasses ────────────────────────────────────── #
 
 class HumanGOAdapter(GOAdapter):
-    layer_name    = "go"
-    _GENE_GO_FILE = "edge_human_gene_has_go.tsv"
-    _GENE_LABEL   = "human gene"
-    _EDGE_LABEL   = "human gene has go term"
-    _ID_PREFIX    = "HGNC:"
-    _ORGANISM     = "Homo sapiens"
+    layer_name     = "go"
+    _GENE_GO_FILE  = "edge_human_gene_has_go.tsv"
+    _GENE_LABEL    = "human gene"
+    _EDGE_LABEL    = "human gene has go term"
+    _ID_PREFIX     = "HGNC:"
+    _ORGANISM      = "Homo sapiens"
+    REQUIRED_FILES = [_GENE_GO_FILE]
 
 
 class MouseGOAdapter(GOAdapter):
-    layer_name    = "go"
-    _GENE_GO_FILE = "edge_mouse_gene_has_go.tsv"
-    _GENE_LABEL   = "mouse gene"
-    _EDGE_LABEL   = "mouse gene has go term"
-    _ID_PREFIX    = ""
-    _ORGANISM     = "Mus musculus"
+    layer_name     = "go"
+    _GENE_GO_FILE  = "edge_mouse_gene_has_go.tsv"
+    _GENE_LABEL    = "mouse gene"
+    _EDGE_LABEL    = "mouse gene has go term"
+    _ID_PREFIX     = ""
+    _ORGANISM      = "Mus musculus"
+    REQUIRED_FILES = [_GENE_GO_FILE]

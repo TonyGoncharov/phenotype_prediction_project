@@ -51,7 +51,7 @@ class BaseAdapter:
             self.logger.debug("Loaded %d rows from %s", len(df), filename)
             return df
         except pd.errors.EmptyDataError:
-            raise ValueError(f"TSV file is empty (no header row): {path}") from None
+            raise ValueError(f"TSV file is completely empty (no content at all): {path}") from None
 
     # ── Deduplication ──────────────────────────────────────────────── #
 
@@ -71,6 +71,18 @@ class BaseAdapter:
             if node_id not in seen:
                 seen.add(node_id)
                 yield node_id, label, props
+
+    @staticmethod
+    def _unique_edges(
+        tuples: Iterator[EdgeTuple],
+    ) -> Generator[EdgeTuple, None, None]:
+        """Yield edge tuples, skipping duplicates by (source_id, target_id, label)."""
+        seen: set[tuple[str, str, str]] = set()
+        for src, tgt, label, props in tuples:
+            key = (src, tgt, label)
+            if key not in seen:
+                seen.add(key)
+                yield src, tgt, label, props
 
     # ── Instrumented generators ────────────────────────────────────── #
 
@@ -122,6 +134,37 @@ class BaseAdapter:
         Remove single quotes that break neo4j-admin CSV import (quote char = ').
         """
         return value.replace("'", "")
+
+    # ── DataFrame guards ───────────────────────────────────────────── #
+
+    def _check_empty_df(self, df: "pd.DataFrame", name: str) -> bool:
+        """Return True and log a warning if *df* has no rows; False otherwise."""
+        if df.empty:
+            self.logger.warning("%s file is empty.", name)
+            return True
+        return False
+
+    # ── Shared node helpers ────────────────────────────────────────── #
+
+    def _gene_nodes_from_tsv(
+        self,
+        tsv_filename: str,
+        gene_col: str = "gene_symbol",
+    ) -> Generator[NodeTuple, None, None]:
+        """Yield one gene node per unique value in *gene_col* of *tsv_filename*.
+
+        Uses self._ID_PREFIX, self._GENE_LABEL, and self._ORGANISM — all of
+        which must be defined by the calling subclass.
+        """
+        df = self._read(tsv_filename)
+        unique_genes = df[gene_col].dropna().unique()
+        self.logger.debug("Gene nodes to emit: %d", len(unique_genes))
+        id_prefix: str = getattr(self, "_ID_PREFIX", "")
+        gene_label: str = getattr(self, "_GENE_LABEL", "gene")
+        organism: str = getattr(self, "_ORGANISM", "")
+        for symbol in unique_genes:
+            node_id = f"{id_prefix}{symbol}" if id_prefix else symbol
+            yield (node_id, gene_label, {"symbol": symbol, "organism": organism})
 
     # ── Default no-op generators ───────────────────────────────────── #
 
