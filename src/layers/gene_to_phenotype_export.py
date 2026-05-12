@@ -83,6 +83,12 @@ def read_genes_to_phenotype(path: str | Path) -> pd.DataFrame:
     missing = required - set(df.columns)
     if missing:
         raise ValueError(f"genes_to_phenotype missing columns: {missing}. Got: {list(df.columns)}")
+    # HPO uses "-" as a placeholder for genes without a known symbol; drop them.
+    n_before = len(df)
+    df = df[df["gene_symbol"].notna() & (df["gene_symbol"] != "-")]
+    dropped = n_before - len(df)
+    if dropped:
+        logger.warning("Dropped %d rows with gene_symbol='-' (no known symbol in HPO)", dropped)
     logger.debug("g2p: %d rows, %d genes, %d unique HP terms",
                  len(df), df["gene_symbol"].nunique(), df["hpo_id"].nunique())
     return df
@@ -192,86 +198,94 @@ def run_pipeline(
         logger.debug("Copied node_mp_top_names.tsv to out_dir")
 
     # ── Human branch ──────────────────────────────────────────────────────────
+    human_gene_mp_top = pd.DataFrame()
     if build_human:
         logger.info("--- Human branch ---")
+        try:
+            g2p          = read_genes_to_phenotype(genes_to_phenotype_path)
+            hp_to_mp_top = read_hp_to_mp_top(mapping_dir)
 
-        g2p          = read_genes_to_phenotype(genes_to_phenotype_path)
-        hp_to_mp_top = read_hp_to_mp_top(mapping_dir)
+            human_gene_mp_top = build_human_gene_mp_top(g2p, hp_to_mp_top)
+            human_gene_mp_top.to_csv(
+                out_dir / "edge_human_gene_has_mp_top.tsv", sep="\t", index=False
+            )
+            logger.info("Written: edge_human_gene_has_mp_top.tsv (%d rows)", len(human_gene_mp_top))
+            _dupes = human_gene_mp_top.duplicated(subset=["gene_symbol", "mp_top_id"]).sum()
+            if _dupes:
+                logger.warning("Duplicate gene→MP top rows in output: %d", _dupes)
 
-        human_gene_mp_top = build_human_gene_mp_top(g2p, hp_to_mp_top)
-        human_gene_mp_top.to_csv(
-            out_dir / "edge_human_gene_has_mp_top.tsv", sep="\t", index=False
-        )
-        logger.info("Written: edge_human_gene_has_mp_top.tsv (%d rows)", len(human_gene_mp_top))
-
-        # QC: HP terms in g2p that have no MP top mapping
-        mapped_hp = set(hp_to_mp_top["hp_id"].dropna())
-        unmapped  = sorted(set(g2p["hpo_id"].dropna()) - mapped_hp)
-        pd.DataFrame({"unmapped_hp_id": unmapped}).to_csv(
-            out_dir / "qc_unmapped_hp.tsv", sep="\t", index=False
-        )
-        logger.info("Human gene→MP top edges : %d", len(human_gene_mp_top))
-        logger.info("Unmapped HP terms       : %d / %d",
-                    len(unmapped), g2p["hpo_id"].nunique())
-    else:
-        human_gene_mp_top = pd.DataFrame()
+            # QC: HP terms in g2p that have no MP top mapping
+            mapped_hp = set(hp_to_mp_top["hp_id"].dropna())
+            unmapped  = sorted(set(g2p["hpo_id"].dropna()) - mapped_hp)
+            pd.DataFrame({"unmapped_hp_id": unmapped}).to_csv(
+                out_dir / "qc_unmapped_hp.tsv", sep="\t", index=False
+            )
+            logger.info("Human gene→MP top edges : %d", len(human_gene_mp_top))
+            logger.info("Unmapped HP terms       : %d / %d",
+                        len(unmapped), g2p["hpo_id"].nunique())
+        except Exception as exc:
+            raise RuntimeError(f"Human branch failed: {exc}") from exc
 
     # ── Mouse branch ──────────────────────────────────────────────────────────
+    mouse_gene_mp = mp_in_top_from_mgi = mouse_gene_mp_top = pd.DataFrame()
     if build_mouse:
         logger.info("--- Mouse branch ---")
+        try:
+            from src.utils.gene_info import build_mouse_symbol_maps
+            _, mgi_to_symbol = build_mouse_symbol_maps(gene_info_path)
 
-        from src.utils.gene_info import build_mouse_symbol_maps
-        _, mgi_to_symbol = build_mouse_symbol_maps(gene_info_path)
+            mp_ont = load_mp_ontology(data_dir)
+            mp_top = top_children(mp_ont, MP_ROOT)
 
-        mp_ont = load_mp_ontology(data_dir)
-        mp_top = top_children(mp_ont, MP_ROOT)
+            mgi = read_mgi_phenogenomp(mgi_path)
 
-        mgi = read_mgi_phenogenomp(mgi_path)
+            raw_mouse = (
+                mgi[["marker_mgi", "mp_id"]]
+                .dropna(subset=["marker_mgi", "mp_id"])
+                .drop_duplicates()
+                .copy()
+            )
+            raw_mouse["mgi_single"] = raw_mouse["marker_mgi"].str.split("|")
+            raw_mouse = raw_mouse.explode("mgi_single")
+            raw_mouse["mgi_single"] = raw_mouse["mgi_single"].str.strip()
+            raw_mouse["gene_symbol"] = raw_mouse["mgi_single"].map(mgi_to_symbol)
 
-        raw_mouse = (
-            mgi[["marker_mgi", "mp_id"]]
-            .dropna(subset=["marker_mgi", "mp_id"])
-            .drop_duplicates()
-            .copy()
-        )
-        raw_mouse["mgi_single"] = raw_mouse["marker_mgi"].str.split("|")
-        raw_mouse = raw_mouse.explode("mgi_single")
-        raw_mouse["mgi_single"] = raw_mouse["mgi_single"].str.strip()
-        raw_mouse["gene_symbol"] = raw_mouse["mgi_single"].map(mgi_to_symbol)
+            n_total  = raw_mouse["mgi_single"].nunique()
+            n_mapped = raw_mouse.dropna(subset=["gene_symbol"])["mgi_single"].nunique()
+            if n_total - n_mapped:
+                logger.warning(
+                    "QC: %d / %d MGI IDs could not be mapped to a gene symbol",
+                    n_total - n_mapped, n_total,
+                )
 
-        n_total  = raw_mouse["mgi_single"].nunique()
-        n_mapped = raw_mouse.dropna(subset=["gene_symbol"])["mgi_single"].nunique()
-        if n_total - n_mapped:
-            logger.warning(
-                "QC: %d / %d MGI IDs could not be mapped to a gene symbol",
-                n_total - n_mapped, n_total,
+            mouse_gene_mp = (
+                raw_mouse.dropna(subset=["gene_symbol"])
+                [["gene_symbol", "mp_id"]]
+                .drop_duplicates()
+            )
+            mouse_gene_mp.to_csv(
+                out_dir / "edge_mouse_gene_has_mp.tsv", sep="\t", index=False
             )
 
-        mouse_gene_mp = (
-            raw_mouse.dropna(subset=["gene_symbol"])
-            [["gene_symbol", "mp_id"]]
-            .drop_duplicates()
-        )
-        mouse_gene_mp.to_csv(
-            out_dir / "edge_mouse_gene_has_mp.tsv", sep="\t", index=False
-        )
+            mp_in_top_from_mgi = build_top_edges(
+                mgi["mp_id"], mp_ont, mp_top, MP_ROOT, "mp_id", "mp_top_id"
+            )
+            mp_in_top_from_mgi.to_csv(
+                out_dir / "edge_mp_in_top_from_mgi.tsv", sep="\t", index=False
+            )
 
-        mp_in_top_from_mgi = build_top_edges(
-            mgi["mp_id"], mp_ont, mp_top, MP_ROOT, "mp_id", "mp_top_id"
-        )
-        mp_in_top_from_mgi.to_csv(
-            out_dir / "edge_mp_in_top_from_mgi.tsv", sep="\t", index=False
-        )
+            mouse_gene_mp_top = build_mouse_gene_mp_top(mouse_gene_mp, mp_in_top_from_mgi)
+            mouse_gene_mp_top.to_csv(
+                out_dir / "edge_mouse_gene_has_mp_top.tsv", sep="\t", index=False
+            )
+            _dupes = mouse_gene_mp_top.duplicated(subset=["gene_symbol", "mp_top_id"]).sum()
+            if _dupes:
+                logger.warning("Duplicate mouse gene→MP top rows in output: %d", _dupes)
 
-        mouse_gene_mp_top = build_mouse_gene_mp_top(mouse_gene_mp, mp_in_top_from_mgi)
-        mouse_gene_mp_top.to_csv(
-            out_dir / "edge_mouse_gene_has_mp_top.tsv", sep="\t", index=False
-        )
-
-        logger.info("Mouse gene→MP edges   : %d", len(mouse_gene_mp))
-        logger.info("Mouse gene→MP top     : %d", len(mouse_gene_mp_top))
-    else:
-        mouse_gene_mp = mp_in_top_from_mgi = mouse_gene_mp_top = pd.DataFrame()
+            logger.info("Mouse gene→MP edges   : %d", len(mouse_gene_mp))
+            logger.info("Mouse gene→MP top     : %d", len(mouse_gene_mp_top))
+        except Exception as exc:
+            raise RuntimeError(f"Mouse branch failed: {exc}") from exc
 
     return {
         "human_gene_mp_top":  human_gene_mp_top,

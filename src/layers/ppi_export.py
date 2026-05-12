@@ -252,12 +252,15 @@ def run_ppi_pipeline(
     protein_nodes.to_csv(
         out_dir / "node_human_protein.tsv", sep="\t", index=False
     )
-    logger.debug("Written: node_human_protein.tsv (%d rows)", len(protein_nodes))
+    logger.info("Written: node_human_protein.tsv (%d rows)", len(protein_nodes))
 
     gene_encodes_protein.to_csv(
         out_dir / "edge_human_gene_encodes_protein.tsv", sep="\t", index=False
     )
-    logger.debug("Written: edge_human_gene_encodes_protein.tsv (%d rows)", len(gene_encodes_protein))
+    logger.info("Written: edge_human_gene_encodes_protein.tsv (%d rows)", len(gene_encodes_protein))
+    _dupes = gene_encodes_protein.duplicated(subset=["gene_symbol", "protein_id"]).sum()
+    if _dupes:
+        logger.warning("Duplicate gene→protein rows in output: %d", _dupes)
 
     # pipe-separate list columns for TSV compatibility
     ppi_out = ppi_edges.copy()
@@ -266,7 +269,10 @@ def run_ppi_pipeline(
             lambda v: "|".join(v) if isinstance(v, list) else v
         )
     ppi_out.to_csv(out_dir / "edge_human_ppi.tsv", sep="\t", index=False)
-    logger.debug("Written: edge_human_ppi.tsv (%d rows)", len(ppi_out))
+    logger.info("Written: edge_human_ppi.tsv (%d rows)", len(ppi_out))
+    _dupes = ppi_out.duplicated(subset=["protein_id_a", "protein_id_b"]).sum()
+    if _dupes:
+        logger.warning("Duplicate PPI rows in output: %d", _dupes)
 
     # QC — shouldn't happen but surfaces deprecated BioGRID symbols
     known_symbols = set(protein_nodes["gene_symbol"])

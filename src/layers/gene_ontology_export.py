@@ -141,7 +141,10 @@ def run_go_pipeline(
 
     gene_go = build_gene_go_edges(gene2go, ncbi_to_hgnc, gene_col="gene_symbol")
     gene_go.to_csv(out_dir / "edge_human_gene_has_go.tsv", sep="\t", index=False)
-    logger.debug("Written: edge_human_gene_has_go.tsv")
+    logger.info("Written: edge_human_gene_has_go.tsv (%d rows)", len(gene_go))
+    _dupes = gene_go.duplicated(subset=["gene_symbol", "go_id"]).sum()
+    if _dupes:
+        logger.warning("Duplicate gene→GO rows in output: %d", _dupes)
 
     annotated = set(gene_go["gene_symbol"].dropna())
     all_genes = set(ncbi_to_hgnc.values())
@@ -180,7 +183,10 @@ def run_mouse_go_pipeline(
 
     gene_go = build_gene_go_edges(gene2go, ncbi_to_symbol, gene_col="gene_symbol")
     gene_go.to_csv(out_dir / "edge_mouse_gene_has_go.tsv", sep="\t", index=False)
-    logger.debug("Written: edge_mouse_gene_has_go.tsv")
+    logger.info("Written: edge_mouse_gene_has_go.tsv (%d rows)", len(gene_go))
+    _dupes = gene_go.duplicated(subset=["gene_symbol", "go_id"]).sum()
+    if _dupes:
+        logger.warning("Duplicate mouse gene→GO rows in output: %d", _dupes)
 
     annotated = set(gene_go["gene_symbol"].dropna())
     all_symbols = set(ncbi_to_symbol.values())

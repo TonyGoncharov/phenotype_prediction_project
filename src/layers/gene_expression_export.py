@@ -123,7 +123,10 @@ def run_expression_pipeline(
         ["median_tpm"].max()
     )
     edge_df.to_csv(out_dir / "edge_human_gene_expressed_in_tissue.tsv", sep="\t", index=False)
-    logger.debug("Written: edge_human_gene_expressed_in_tissue.tsv")
+    logger.info("Written: edge_human_gene_expressed_in_tissue.tsv (%d rows)", len(edge_df))
+    _dupes = edge_df.duplicated(subset=["gene_symbol", "tissue_id"]).sum()
+    if _dupes:
+        logger.warning("Duplicate gene→tissue rows in output: %d", _dupes)
 
     # ── Tissue node table ─────────────────────────────────────────── #
     tissue_df = (
@@ -133,7 +136,7 @@ def run_expression_pipeline(
         .reset_index(drop=True)
     )
     tissue_df.to_csv(out_dir / "node_tissue_gtex.tsv", sep="\t", index=False)
-    logger.debug("Written: node_tissue_gtex.tsv")
+    logger.info("Written: node_tissue_gtex.tsv (%d rows)", len(tissue_df))
 
     # ── QC: genes with no tissue above threshold ──────────────────── #
     expressed_symbols = set(edge_df["gene_symbol"].dropna())
