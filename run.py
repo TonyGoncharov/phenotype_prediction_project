@@ -181,6 +181,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--biogrid", default="data/BIOGRID-ALL-5.0.256.tab3.txt",
                    help="BioGRID tab3 file (full dump or human-specific). "
                         "Download from https://downloads.thebiogrid.org/BioGRID")
+    p.add_argument("--min-publications", type=int, default=1, metavar="N",
+                   help="Minimum distinct PubMed IDs per PPI pair (default: 1 = keep all). "
+                        "Set to 2 to require independent replication.")
     p.add_argument("--uberon-obo", default="data/basic.obo",
                    help="Path to uberon/basic.obo "
                         "(download: wget http://purl.obolibrary.org/obo/uberon/basic.obo). "
@@ -314,6 +317,7 @@ def main() -> None:
             run_ppi_pipeline(
                 biogrid_path=args.biogrid,
                 out_dir=tsv_out,
+                min_publications=args.min_publications,
             )
             print(f"-> {tsv_out.resolve()}\n")
 
