@@ -227,18 +227,20 @@ def run_mapping(
     anchor_set  = set(hp2mp.keys())
     mapped_hp   = set(hp_to_mp_top["hp_id"].dropna()) if not hp_to_mp_top.empty else set()
 
-    # HP terms with no anchor at all in HP2MP (cannot be lifted)
-    no_anchor = [hp for hp in unique_hp if not lift_hp_to_anchors(hp, hp_ont, anchor_set)]
-    
+    # Run BFS only for unmapped terms (single pass instead of twice over all terms).
+    no_anchor:       list[str] = []
+    has_anchor_no_mp: list[str] = []
+    for hp in unique_hp:
+        if hp in mapped_hp:
+            continue
+        if lift_hp_to_anchors(hp, hp_ont, anchor_set):
+            has_anchor_no_mp.append(hp)
+        else:
+            no_anchor.append(hp)
+
     pd.DataFrame({"hp_id": sorted(no_anchor)}).to_csv(
         out_dir / "qc_hp_no_anchor.tsv", sep="\t", index=False
     )
-
-    # HP terms that have an anchor but still got no MP mapping (should be empty)
-    has_anchor_no_mp = [
-        hp for hp in unique_hp
-        if lift_hp_to_anchors(hp, hp_ont, anchor_set) and hp not in mapped_hp
-    ]
     pd.DataFrame({"hp_id": sorted(has_anchor_no_mp)}).to_csv(
         out_dir / "qc_hp_no_mapping.tsv", sep="\t", index=False
     )
