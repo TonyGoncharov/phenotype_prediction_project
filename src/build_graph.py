@@ -144,7 +144,7 @@ def build_species(
     logger.info("Edges written in %.1fs", time.perf_counter() - t0)
 
     bc.write_import_call()
-    logger.info("Done → %s", bc._output_directory)
+    logger.info("Done → %s", out_dir)
 
 
 def build(
