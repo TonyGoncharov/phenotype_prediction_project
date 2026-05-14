@@ -20,13 +20,15 @@ dependencies = [
     "obonet>=1.1.1",
     "pronto>=2.7.3",
     "pykeen>=1.11.1",
+    "scikit-learn>=1.4",
+    "torch-geometric>=2.7.0",
 ]
 
 [dependency-groups]
 dev = ["pytest>=8.0"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["template_package"]
+packages = ["src"]
 
 # ------------------------
 # ---- LEGACY SUPPORT ----
