@@ -176,14 +176,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--gtex", default="data/GTEx_Analysis_v10_RNASeQCv2.4.2_gene_median_tpm.gct.gz",
                    help="GTEx median TPM GCT file "
                         "(https://gtexportal.org/home/datasets)")
-    p.add_argument("--tpm-threshold", type=float, default=5.0,
-                   help="Minimum median TPM for a gene-tissue edge (default: 5.0)")
+    p.add_argument("--tpm-threshold", type=float, default=10.0,
+                   help="Minimum median TPM for a gene-tissue edge (default: 10.0)")
     p.add_argument("--biogrid", default="data/BIOGRID-ALL-5.0.256.tab3.txt",
                    help="BioGRID tab3 file (full dump or human-specific). "
                         "Download from https://downloads.thebiogrid.org/BioGRID")
-    p.add_argument("--min-publications", type=int, default=1, metavar="N",
-                   help="Minimum distinct PubMed IDs per PPI pair (default: 1 = keep all). "
-                        "Set to 2 to require independent replication.")
+    p.add_argument("--min-publications", type=int, default=3, metavar="N",
+                   help="Minimum distinct PubMed IDs per PPI pair (default: 3). "
+                        "Set to 1 to keep all interactions.")
     p.add_argument("--uberon-obo", default="data/basic.obo",
                    help="Path to uberon/basic.obo "
                         "(download: wget http://purl.obolibrary.org/obo/uberon/basic.obo). "
