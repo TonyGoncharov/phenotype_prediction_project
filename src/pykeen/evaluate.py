@@ -99,11 +99,10 @@ def evaluate_auprc(
             skipped += 1
             continue
 
-        # Retrieve scores for ALL genes (no cap, include known associations).
         pred_df = predictor.predict_for_phenotype(
             mp_term_id,
             top_k=n_genes,
-            filter_known=False,
+            filter_known=True, # critical
             only_genes=True,
         )
 
