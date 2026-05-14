@@ -75,8 +75,9 @@ def parse_args() -> argparse.Namespace:
         help="BioCypher output directory (produced by run.py --species human).",
     )
     p.add_argument(
-        "--out-dir", default="pykeen_out/ablation/",
-        help="Root output dir. Each condition gets its own subdirectory.",
+        "--out-dir", default=None,
+        help="Root output dir. Each condition gets its own subdirectory. "
+             "Defaults to pykeen_out/ablation/<model_name_lower>/.",
     )
     p.add_argument(
         "--fast", action="store_true",
@@ -96,6 +97,19 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Number of CPU threads (sets OMP_NUM_THREADS and related vars). "
             "Run benchmark_threads.py first to find the sweet spot."
+        ),
+    )
+    p.add_argument(
+        "--model", default="RotatE",
+        choices=["RotatE", "ComplEx", "DistMult"],
+        help="KGE model to train for every ablation condition.",
+    )
+    p.add_argument(
+        "--target-steps", type=int, default=None,
+        help=(
+            "Gradient-step budget per condition. Overrides num_epochs so every "
+            "condition trains for the same number of parameter updates regardless "
+            "of graph size."
         ),
     )
     return p.parse_args()
@@ -120,7 +134,7 @@ def _apply_threads(n: int | None) -> None:
         print(
             f"WARNING: --threads not set and OMP_NUM_THREADS is unset. "
             f"PyTorch will use all {os.cpu_count()} CPU cores, which is "
-            "usually suboptimal for RotatE on large servers.\n"
+            "usually suboptimal for KGE models on large servers.\n"
             "Run benchmark_threads.py to find the optimal count.\n"
         )
 
@@ -131,7 +145,7 @@ def _apply_threads(n: int | None) -> None:
 def main() -> None:
     args     = parse_args()
     data_dir = Path(args.data_dir)
-    out_dir  = Path(args.out_dir)
+    out_dir  = Path(args.out_dir) if args.out_dir else Path(f"pykeen_out/ablation/{args.model.lower()}")
 
     _apply_threads(args.threads)
     check_data_dir(data_dir)
@@ -160,6 +174,8 @@ def main() -> None:
         out_dir=out_dir,
         conditions=selected,
         fast=args.fast,
+        model=args.model,
+        target_steps=args.target_steps,
     )
 
     # ── Summary table ─────────────────────────────────────────────────────────
