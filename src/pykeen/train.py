@@ -16,8 +16,52 @@ from .loader import build_triples_factory
 logger = logging.getLogger(__name__)
 
 # Models that operate in complex embedding space and are known to fail on MPS.
-_COMPLEX_SPACE_MODELS = {"RotatE", "ComplEx", "QuatE", "RotatH", "OTE"}
+_COMPLEX_SPACE_MODELS = {"ComplEx", "RotatE", "QuatE", "RotatH", "OTE"}
 
+# Models known to produce silent NaN/zero gradients on MPS, causing loss to
+# freeze at its initial value without raising an error (verified empirically).
+_MPS_UNSUPPORTED_MODELS = _COMPLEX_SPACE_MODELS | {"DistMult"}
+
+# Per-model loss overrides for sLCWA training.
+# DistMult defaults to MarginRankingLoss(margin=1.0) in PyKEEN.  With sLCWA,
+# random dot-product scores start near 0, so loss = max(0, 1−0) = 1.0 from
+# epoch 1 and stays there: LpRegularizer keeps embeddings small, preventing
+# scores from ever separating.  SoftplusLoss has no margin threshold and
+# provides smooth gradients at any score magnitude.
+_MODEL_LOSS: dict[str, str] = {
+    "DistMult": "softplus",
+}
+
+# ── Gradient-step budget ─────────────────────────────────────────────────────
+
+
+def compute_epochs(
+    n_train_triples: int,
+    batch_size: int,
+    target_steps: int,
+) -> int:
+    """Return the number of epochs that produces ~target_steps gradient updates.
+
+    Different ablation conditions have different numbers of training triples,
+    so a fixed num_epochs gives conditions very different optimisation budgets.
+    This function normalises the budget so every condition trains for the same
+    number of parameter updates regardless of graph size.
+
+    Example
+    -------
+    >>> compute_epochs(756_000, 2048, 80_000)   # no_ppi
+    217
+    >>> compute_epochs(1_520_000, 2048, 80_000)  # no_go
+    108
+    """
+    if n_train_triples <= 0 or batch_size <= 0 or target_steps <= 0:
+        raise ValueError(
+            f"All arguments must be positive integers "
+            f"(got n_train_triples={n_train_triples}, "
+            f"batch_size={batch_size}, target_steps={target_steps})"
+        )
+    steps_per_epoch = n_train_triples / batch_size
+    return max(1, round(target_steps / steps_per_epoch))
 
 # ── Data splitting ────────────────────────────────────────────────────────────
 
@@ -128,6 +172,25 @@ def run_training(
     logger.info("=" * 60)
     _report_relation_split(train_tf, train_tf, val_tf, test_tf)
 
+    # ── 1b. Resolve num_epochs from target_steps when needed ─────────────────
+    # An explicit target_steps in the passed config overrides any static num_epochs
+    # from DEFAULT_CONFIG so that --target-steps works on prot1 too.
+    # The fast preset (num_epochs=30, no target_steps) is unaffected because
+    # _explicit_target will be None and cfg["num_epochs"] will already be set.
+    _explicit_target = (config or {}).get("target_steps")
+    if _explicit_target or cfg.get("num_epochs") is None:
+        _target = _explicit_target or cfg.get("target_steps")
+        if _target:
+            cfg["num_epochs"] = compute_epochs(
+                train_tf.num_triples, cfg["batch_size"], _target
+            )
+            logger.info(
+                "target_steps=%d → num_epochs=%d (train triples=%d, batch=%d)",
+                _target, cfg["num_epochs"], train_tf.num_triples, cfg["batch_size"],
+            )
+        else:
+            raise ValueError("cfg must contain 'num_epochs' or 'target_steps'")
+
     # ── 2. Resolve device ────────────────────────────────────────────────────
     if device == "auto":
         if torch.cuda.is_available():
@@ -137,13 +200,12 @@ def run_training(
         else:
             device = "cpu"
 
-    # RotatE works in complex space and calls norm() on complex tensors.
-    # PyTorch MPS does not yet implement this op → RuntimeError at first batch.
-    # Fall back to CPU automatically rather than crashing.
-    if device == "mps" and cfg.get("model") in _COMPLEX_SPACE_MODELS:
+    # Several models fail silently on MPS: complex-space models (RotatE, ComplEx)
+    # crash on missing complex norm ops; DistMult produces silent NaN gradients
+    # that freeze the loss at its initial value.  Fall back to CPU in all cases.
+    if device == "mps" and cfg.get("model") in _MPS_UNSUPPORTED_MODELS:
         logger.warning(
-            "MPS (Apple Silicon GPU) does not support complex norm ops "
-            "required by %s (PyTorch limitation). Falling back to CPU.",
+            "%s is not supported on MPS (Apple Silicon GPU). Falling back to CPU.",
             cfg["model"],
         )
         device = "cpu"
@@ -152,12 +214,33 @@ def run_training(
 
     # ── 3. Run PyKEEN pipeline ────────────────────────────────────────────────
     logger.info("=" * 60)
-    logger.info("Step 2/3 — Training RotatE  (epochs=%d, dim=%d, negs=%d)",
-                cfg["num_epochs"], cfg["embedding_dim"], cfg["num_negs_per_pos"])
+    logger.info("Step 2/3 — Training %s  (epochs=%d, dim=%d, negs=%d)",
+                cfg["model"], cfg["num_epochs"], cfg["embedding_dim"], cfg["num_negs_per_pos"])
     logger.info("=" * 60)
 
     checkpoint_dir = out_dir / "checkpoints"
     checkpoint_dir.mkdir(exist_ok=True)
+
+    # ── Early stopping config ─────────────────────────────────────────────────
+    _es_patience = cfg.get("es_patience", 0)
+    if _es_patience > 0:
+        _es_frequency = cfg.get("es_frequency", 10)
+        _es_delta     = cfg.get("es_delta", 2e-3)
+        stopper       = "early"
+        stopper_kwargs = dict(
+            metric="mrr",
+            patience=_es_patience,
+            frequency=_es_frequency,
+            relative_delta=_es_delta,
+            larger_is_better=True,
+        )
+        logger.info(
+            "Early stopping — metric=mrr  patience=%d  frequency=%d  delta=%.4f",
+            _es_patience, _es_frequency, _es_delta,
+        )
+    else:
+        stopper        = "nop"
+        stopper_kwargs = {}
 
     result = pipeline(
         # ── Data ─────────────────────────────────────────────────────────────
@@ -171,6 +254,10 @@ def run_training(
         model_kwargs=dict(
             embedding_dim=cfg["embedding_dim"],
         ),
+
+        # ── Loss ──────────────────────────────────────────────────────────────
+        # Use model-specific loss if defined, otherwise PyKEEN model default.
+        **({"loss": _MODEL_LOSS[cfg["model"]]} if cfg["model"] in _MODEL_LOSS else {}),
 
         # ── Training loop ─────────────────────────────────────────────────────
         # sLCWA: fast stochastic negative sampling, standard for large KGs.
@@ -189,7 +276,7 @@ def run_training(
         training_kwargs=dict(
             num_epochs=cfg["num_epochs"],
             batch_size=cfg["batch_size"],
-            checkpoint_name="rotate.pt",
+            checkpoint_name=f"{cfg['model'].lower()}.pt",
             checkpoint_directory=str(checkpoint_dir),
             checkpoint_frequency=cfg["checkpoint_frequency"],
         ),
@@ -201,6 +288,10 @@ def run_training(
         evaluator="RankBasedEvaluator",
         evaluator_kwargs=dict(filtered=True),
         evaluation_kwargs=dict(batch_size=cfg["eval_batch_size"]),
+
+        # ── Early stopping ────────────────────────────────────────────────────
+        stopper=stopper,
+        stopper_kwargs=stopper_kwargs,
 
         # ── Misc ──────────────────────────────────────────────────────────────
         device=device,
@@ -417,7 +508,7 @@ _FAST_CONFIG = {
 
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Train RotatE on the Human Knowledge Graph (gene→phenotype focus).",
+        description="Train a KGE model on the Human Knowledge Graph (gene→phenotype focus).",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     p.add_argument(
@@ -426,16 +517,24 @@ def _parse_args() -> argparse.Namespace:
              "(e.g. biocypher_out/human/).",
     )
     p.add_argument(
-        "--out-dir", default="pykeen_out/rotate",
-        help="Directory to save the trained model, logs, and summary.",
+        "--out-dir", default=None,
+        help="Directory to save the trained model, logs, and summary. "
+             "Defaults to pykeen_out/<model_name_lower>/.",
     )
-    p.add_argument("--epochs",  type=int,   default=DEFAULT_CONFIG["num_epochs"])
+    p.add_argument("--epochs",  type=int,   default=DEFAULT_CONFIG.get("num_epochs"),
+                   help="Number of epochs. If omitted and target_steps is in config, "
+                        "epochs are computed automatically from the gradient-step budget.")
     p.add_argument("--dim",     type=int,   default=DEFAULT_CONFIG["embedding_dim"],
                    help="Embedding dimension (must be even for RotatE).")
     p.add_argument("--lr",      type=float, default=DEFAULT_CONFIG["lr"])
     p.add_argument("--batch",   type=int,   default=DEFAULT_CONFIG["batch_size"])
     p.add_argument("--negs",    type=int,   default=DEFAULT_CONFIG["num_negs_per_pos"],
                    help="Negative samples per positive triple.")
+    p.add_argument(
+        "--model", default="RotatE",
+        choices=["RotatE", "ComplEx", "DistMult"],
+        help="KGE model to train.",
+    )
     p.add_argument("--device",  default="auto",
                    choices=["auto", "cpu", "cuda", "mps"])
     p.add_argument("--seed",    type=int,   default=DEFAULT_CONFIG["random_seed"])
@@ -459,6 +558,9 @@ if __name__ == "__main__":
     )
     args = _parse_args()
 
+    if args.out_dir is None:
+        args.out_dir = f"pykeen_out/{args.model.lower()}"
+
     if args.fast:
         override = _FAST_CONFIG.copy()
         logger.info("--fast preset: %s", override)
@@ -472,9 +574,13 @@ if __name__ == "__main__":
             "random_seed":      args.seed,
         }
 
-    dim = override.get("embedding_dim", args.dim)
-    if dim % 2 != 0:
-        raise ValueError(f"embedding_dim must be even for RotatE (got {dim})")
+    override["model"] = args.model
+    if args.model in _COMPLEX_SPACE_MODELS:
+        dim = override.get("embedding_dim", args.dim)
+        if dim % 2 != 0:
+            raise ValueError(
+                f"embedding_dim must be even for {args.model} (complex space, got {dim})"
+            )
 
     run_training(
         data_dir=args.data_dir,

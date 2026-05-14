@@ -183,11 +183,20 @@ def build_gene_encodes_protein(protein_nodes: pd.DataFrame) -> pd.DataFrame:
 # Edge builder
 # ─────────────────────────────────────────────────────────────────────────────
 
-def build_ppi_edges(ppi: pd.DataFrame) -> pd.DataFrame:
+def build_ppi_edges(
+    ppi: pd.DataFrame,
+    min_publications: int = 1,
+) -> pd.DataFrame:
     """Aggregate all evidence for each unique (protein_a, protein_b) pair.
 
     The pair is canonicalised (sorted alphabetically) so A–B and B–A are one edge.
     throughput collapses to "Low Throughput" if any low-throughput record exists.
+
+    Parameters
+    ----------
+    min_publications
+        Minimum number of distinct PubMed IDs required to retain an interaction.
+        Default is 1 (keep all).  Set to 2 to require independent replication.
     """
     df = ppi.copy()
     df["protein_id_a"] = PROTEIN_ID_PREFIX + df["symbol_a"]
@@ -218,6 +227,16 @@ def build_ppi_edges(ppi: pd.DataFrame) -> pd.DataFrame:
         .reset_index()
     )
     logger.debug("Unique PPI edges after aggregation: %d", len(agg))
+
+    if min_publications > 1:
+        before = len(agg)
+        agg = agg[agg["pubmed_ids"].apply(len) >= min_publications].reset_index(drop=True)
+        logger.info(
+            "min_publications=%d filter: %d → %d edges (removed %d, %.1f%%)",
+            min_publications, before, len(agg),
+            before - len(agg), (before - len(agg)) / before * 100,
+        )
+
     return agg
 
 
@@ -228,15 +247,24 @@ def build_ppi_edges(ppi: pd.DataFrame) -> pd.DataFrame:
 def run_ppi_pipeline(
     biogrid_path: str | Path,
     out_dir: str | Path = "./out",
+    min_publications: int = 1,
 ) -> dict[str, pd.DataFrame]:
-    """Full export pipeline for human PPI data from BioGRID."""
+    """Full export pipeline for human PPI data from BioGRID.
+
+    Parameters
+    ----------
+    min_publications
+        Minimum distinct PubMed IDs per interaction pair.
+        1 = keep all (default); 2 = require independent replication.
+    """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info("=" * 60)
     logger.info("PPI export pipeline (human)")
-    logger.info("BioGRID path : %s", biogrid_path)
-    logger.info("Output dir   : %s", out_dir)
+    logger.info("BioGRID path     : %s", biogrid_path)
+    logger.info("Output dir       : %s", out_dir)
+    logger.info("min_publications : %d", min_publications)
     logger.info("=" * 60)
 
     raw   = read_biogrid(biogrid_path)
@@ -247,7 +275,7 @@ def run_ppi_pipeline(
 
     protein_nodes        = build_protein_nodes(human)
     gene_encodes_protein = build_gene_encodes_protein(protein_nodes)
-    ppi_edges            = build_ppi_edges(human)
+    ppi_edges            = build_ppi_edges(human, min_publications=min_publications)
 
     protein_nodes.to_csv(
         out_dir / "node_human_protein.tsv", sep="\t", index=False
@@ -316,7 +344,17 @@ if __name__ == "__main__":
         help="Path to BIOGRID-*.tab3.txt (full dump or human-specific).",
     )
     p.add_argument("--out", default="./out", metavar="DIR")
+    p.add_argument(
+        "--min-publications", type=int, default=1, metavar="N",
+        help="Minimum distinct PubMed IDs required per interaction pair. "
+             "1 = keep all (default). 2 = require independent replication "
+             "(removes most single-evidence high-throughput noise).",
+    )
     args = p.parse_args()
 
     setup_logging(out_dir=args.out)
-    run_ppi_pipeline(biogrid_path=args.biogrid, out_dir=args.out)
+    run_ppi_pipeline(
+        biogrid_path=args.biogrid,
+        out_dir=args.out,
+        min_publications=args.min_publications,
+    )

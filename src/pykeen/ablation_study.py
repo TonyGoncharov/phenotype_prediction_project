@@ -217,9 +217,11 @@ def _get_fixed_test_positives(
 
 def run_ablation(
     data_dir: str | Path = "biocypher_out/human/",
-    out_dir:  str | Path = "pykeen_out/ablation/",
+    out_dir:  str | Path | None = None,
     conditions: dict[str, set[str] | None] | None = None,
     fast: bool = False,
+    target_steps: int | None = None,
+    model: str = "RotatE",
 ) -> pd.DataFrame:
     """Train and evaluate one model per ablation condition.
 
@@ -238,6 +240,8 @@ def run_ablation(
     be used as the primary cross-condition comparison metric.
     """
     conditions = conditions or CONDITIONS
+    if out_dir is None:
+        out_dir = f"pykeen_out/ablation/{model.lower()}"
     out_path   = Path(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
 
@@ -256,7 +260,16 @@ def run_ablation(
         logger.info("=" * 60)
 
         try:
-            cfg = {**(fast and _FAST_OVERRIDE or {}), "include_relations": rels}
+            cfg = {
+                # Disable early stopping: ES triggers full-entity evaluation every
+                # es_frequency epochs (same RAM spike as final eval).  Budget is
+                # controlled by target_steps, so ES adds no benefit here.
+                "es_patience": 0,
+                **(fast and _FAST_OVERRIDE or {}),
+                "model": model,
+                "include_relations": rels,
+                **({"target_steps": target_steps} if target_steps else {}),
+            }
 
             # ── Contamination-safe splits ─────────────────────────────────────
             # Each condition's test fold is locked to exactly the full-graph
@@ -355,21 +368,31 @@ def _parse_args() -> argparse.Namespace:
     )
     p.add_argument("--data-dir", default="biocypher_out/human/",
                    help="BioCypher output directory.")
-    p.add_argument("--out-dir",  default="pykeen_out/ablation/",
-                   help="Root output dir; each condition gets a subdirectory.")
+    p.add_argument("--out-dir",  default=None,
+                   help="Root output dir; each condition gets a subdirectory. "
+                        "Defaults to pykeen_out/ablation/<model_name_lower>/.")
     p.add_argument("--fast", action="store_true",
                    help="Smoke-test preset (dim=64, epochs=30). ~10 min per condition on CPU.")
     p.add_argument("--conditions", nargs="+", default=None,
                    choices=list(CONDITIONS.keys()),
                    help="Subset of conditions to run (default: all).")
+    p.add_argument(
+        "--target-steps", type=int, default=None,
+        help="Gradient-step budget per condition. Overrides num_epochs so every "
+             "condition receives the same number of parameter updates regardless "
+             "of graph size. Recommended: 80000 for MacBook runs.",
+    )
     return p.parse_args()
 
 
 if __name__ == "__main__":
     args = _parse_args()
 
+    # resolve out_dir early so setup_logging has the correct path
+    _resolved_out = Path(args.out_dir) if args.out_dir else Path("pykeen_out/ablation/rotate")
+
     setup_logging(
-        out_dir=Path(args.out_dir),
+        out_dir=_resolved_out,
         log_filename="ablation.log",
     )
     selected = (
@@ -379,9 +402,10 @@ if __name__ == "__main__":
 
     df = run_ablation(
         data_dir=args.data_dir,
-        out_dir=args.out_dir,
+        out_dir=args.out_dir,  # None → run_ablation computes from model name
         conditions=selected,
         fast=args.fast,
+        target_steps=args.target_steps
     )
 
     print("\n" + "=" * 70)

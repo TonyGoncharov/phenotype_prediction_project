@@ -278,7 +278,7 @@ class GenePhenotypePredictor:
 
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Gene ↔ phenotype link prediction with a trained RotatE model.",
+        description="Gene ↔ phenotype link prediction with a trained KGE model.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     p.add_argument("--model-dir", required=True,

@@ -24,15 +24,18 @@ _PROT1_CONFIG: dict = {
 _MACBOOK_CONFIG: dict = {
     "model":            "RotatE",
     "embedding_dim":    128,
-    "num_epochs":       200,
     "batch_size":       2048,
     "lr":               1e-3,
-    "num_negs_per_pos": 32,
+    "num_negs_per_pos": 64,
     "train_frac":       0.80,
     "val_frac":         0.10,
     "random_seed":      42,
-    "eval_batch_size":  512,
-    "checkpoint_frequency": 50,
+    "eval_batch_size":  128,
+    "checkpoint_frequency": 25,
+    "target_steps":  80_000,
+    "es_patience":   10,
+    "es_frequency":  10,
+    "es_delta":      2e-3,
 }
 
 # ── Named configs for env-var selection ──────────────────────────────────────
