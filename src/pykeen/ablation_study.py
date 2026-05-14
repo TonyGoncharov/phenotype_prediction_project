@@ -111,13 +111,16 @@ def _make_condition_splits(
     id_to_entity: dict[int, str] = {v: k for k, v in tf.entity_to_id.items()}
 
     # ── Find which triples in this TriplesFactory are locked test pairs ───────
+    # Pre-filter to G→P triples before iterating to avoid a Python loop over
+    # all triples (which can be millions for the full graph).
     locked_mask = torch.zeros(tf.num_triples, dtype=torch.bool)
-    for i, (h, r, t) in enumerate(tf.mapped_triples.tolist()):
-        if r == rel_id:
-            gene   = id_to_entity.get(h, "")
-            mp_trm = id_to_entity.get(t, "")
-            if mp_trm in locked_test_pairs and gene in locked_test_pairs[mp_trm]:
-                locked_mask[i] = True
+    gp_indices = (tf.mapped_triples[:, 1] == rel_id).nonzero(as_tuple=True)[0]
+    for idx in gp_indices.tolist():
+        h, _, t = tf.mapped_triples[idx].tolist()
+        gene   = id_to_entity.get(h, "")
+        mp_trm = id_to_entity.get(t, "")
+        if mp_trm in locked_test_pairs and gene in locked_test_pairs[mp_trm]:
+            locked_mask[idx] = True
 
     n_locked = int(locked_mask.sum().item())
     logger.info(
