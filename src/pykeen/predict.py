@@ -32,6 +32,8 @@ class GenePhenotypePredictor:
         model: torch.nn.Module,
         training_tf: TriplesFactory,
         relation: str = GENE_PHENOTYPE_RELATION,
+        gene_prefix: str = "HGNC:",
+        phenotype_prefix: str = "MP:",
     ) -> None:
         if relation not in training_tf.relation_to_id:
             available = sorted(training_tf.relation_to_id.keys())
@@ -43,11 +45,13 @@ class GenePhenotypePredictor:
         self.model = model.eval()
         self.training_tf = training_tf
         self.relation = relation
+        self.gene_prefix = gene_prefix
+        self.phenotype_prefix = phenotype_prefix
 
         # Convenience: partition entities by type based on ID prefix
         all_entities = list(training_tf.entity_to_id.keys())
-        self.mp_entities:   list[str] = [e for e in all_entities if e.startswith("MP:")]
-        self.gene_entities: list[str] = [e for e in all_entities if e.startswith("HGNC:")]
+        self.mp_entities:   list[str] = [e for e in all_entities if e.startswith(phenotype_prefix)]
+        self.gene_entities: list[str] = [e for e in all_entities if e.startswith(gene_prefix)]
 
         logger.info(
             "Predictor ready — %d genes | %d MP top-terms | relation: %s",
@@ -110,7 +114,7 @@ class GenePhenotypePredictor:
 
         pred_df = pred.df
         if only_mp_terms:
-            pred_df = pred_df[pred_df["tail_label"].str.startswith("MP:")].copy()
+            pred_df = pred_df[pred_df["tail_label"].str.startswith(self.phenotype_prefix)].copy()
 
         pred_df = pred_df.sort_values("score", ascending=False).head(top_k)
         pred_df.insert(0, "gene_id", gene_id)
@@ -147,7 +151,7 @@ class GenePhenotypePredictor:
 
         pred_df = pred.df
         if only_genes:
-            pred_df = pred_df[pred_df["head_label"].str.startswith("HGNC:")].copy()
+            pred_df = pred_df[pred_df["head_label"].str.startswith(self.gene_prefix)].copy()
 
         pred_df = pred_df.sort_values("score", ascending=False).head(top_k)
         pred_df.insert(0, "mp_term_id", mp_term_id)
