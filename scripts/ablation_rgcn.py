@@ -43,14 +43,14 @@ Usage
     uv run python scripts/ablation_rgcn.py --data-dir biocypher_out/human --parallel
 
     # Parallel, explicit worker count and thread budget
-    uv run python scripts/ablation_rgcn.py --data-dir biocypher_out/human \\
-        --parallel --max-workers 3 --threads-per-worker 42
+    uv run python scripts/ablation_rgcn.py --data-dir biocypher_out/human \
+        --parallel --max-workers 3 --threads-per-worker 42 --rgcn-epochs 1000
 
     # Quick smoke test
     uv run python scripts/ablation_rgcn.py --data-dir biocypher_out/human --fast
 
     # Single condition
-    uv run python scripts/ablation_rgcn.py --data-dir biocypher_out/human \\
+    uv run python scripts/ablation_rgcn.py --data-dir biocypher_out/human \
         --conditions all no_ppi
 """
 
@@ -322,6 +322,13 @@ def _run_condition(
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model  = RGCNEncoder().to(device)
         optim  = torch.optim.Adam(model.parameters(), lr=1e-3)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optim,
+            mode="min",
+            factor=0.5,
+            patience=10,
+            min_lr=1e-5,
+        )
 
         ei = edge_index.to(device)
         et = edge_type.to(device)
@@ -348,6 +355,7 @@ def _run_condition(
             )
             loss.backward()
             optim.step()
+            scheduler.step(loss.item())
 
             if epoch % 20 == 0:
                 log.info("Epoch %d/%d  loss=%.4f", epoch, rgcn_epochs, loss.item())
