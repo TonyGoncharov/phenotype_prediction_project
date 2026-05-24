@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "phenotype_prediction_project"
+version = "0.11.0"
+description = "Template for creating a BioCypher-driven knowledge graph"
+readme = "README.md"
+authors = [
+    {name = "Sebastian Lobentanzer", email = "sebastian.lobentanzer@gmail.com"},
+    {name = "Andreas Maier", email = "andreas.maier-1@uni-hamburg.de"},
+]
+requires-python = ">=3.11"
+license = {text = "MIT"}
+
+dependencies = [
+    "biocypher>=0.11.0",
+    "matplotlib>=3.10.9",
+    "obonet>=1.1.1",
+    "pronto>=2.7.3",
+    "pykeen>=1.11.1",
+    "scikit-learn>=1.4",
+    "torch-geometric>=2.7.0",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.0"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
