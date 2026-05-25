@@ -1,0 +1,117 @@
+
+# BioCypher schema for the MOUSE gene-phenotype knowledge graph.
+
+# MVP gene-node contract: mouse genes are identified by gene symbol.
+# TODO: migrate to true MGI IDs in all exporters and adapters at the same time.
+
+# ═══════════════════════════════════════════════════════════════════
+#  Nodes
+# ═══════════════════════════════════════════════════════════════════
+
+mouse gene:
+  represented_as: node
+  preferred_id: symbol
+  label_in_input: mouse gene
+  is_a: gene
+  properties:
+    symbol: str
+    organism: str
+
+mp top term:
+  represented_as: node
+  preferred_id: mp
+  label_in_input: mp top term
+  is_a: phenotypic feature
+  properties:
+    mp_id: str
+    name: str
+    
+go term:
+  represented_as: node
+  preferred_id: go
+  label_in_input: go term
+  is_a: ontology class
+  properties:
+    go_id: str
+    name: str
+    namespace: str
+
+tissue:
+  represented_as: node
+  preferred_id: uberon
+  label_in_input: tissue
+  is_a: gross anatomical structure
+  properties:
+    uberon_id: str
+    name: str
+
+protein:
+  represented_as: node
+  preferred_id: symbol
+  label_in_input: protein
+  is_a: gene product
+  properties:
+    gene_symbol: str
+    organism: str
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Edges
+# ═══════════════════════════════════════════════════════════════════
+
+# ── Layer 1: Phenotype (MGI) ────────────────────────────────────── #
+
+mouse gene has mp top term:
+  represented_as: edge
+  label_in_input: mouse gene has mp top term
+  is_a: gene to phenotypic feature association
+  source: mouse gene
+  target: mp top term
+  
+# ── Layer 2: GO ────────────────────────────────────── #
+mouse gene has go term:
+  represented_as: edge
+  label_in_input: mouse gene has go term
+  is_a: association
+  source: mouse gene
+  target: go term
+  properties:
+    evidence_codes: str[]
+    aspect: str
+
+# ── Layer 3: Expression (GXD / MGI RNA-seq) ─────────────────────── #
+
+mouse gene expressed in tissue:
+  represented_as: edge
+  label_in_input: mouse gene expressed in tissue
+  is_a: gene to expression site association
+  source: mouse gene
+  target: tissue
+  properties:
+    median_tpm: float
+    tpm_level: str
+    n_experiments: int
+
+# ── Layer 4: Gene → Protein (encodes) ───────────────────────────── #
+
+mouse gene encodes protein:
+  represented_as: edge
+  label_in_input: mouse gene encodes protein
+  is_a: gene to gene product relationship
+  source: mouse gene
+  target: protein
+
+# ── Layer 5: Protein–Protein Interactions (BioGRID) ─────────────── #
+
+mouse protein interacts with:
+  represented_as: edge
+  label_in_input: mouse protein interacts with
+  is_a: pairwise molecular interaction
+  source: protein
+  target: protein
+  properties:
+    experimental_systems:       str[]
+    experimental_system_types:  str[]
+    throughput:                 str
+    source_db: str
+    pubmed_ids: str[]

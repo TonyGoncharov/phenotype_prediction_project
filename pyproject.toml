@@ -1,0 +1,101 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "phenotype-prediction-project"
+version = "0.1.0"
+description = "Human and mouse genotype-to-phenotype knowledge graph and phenotype prediction pipeline"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [
+    {name = "Anton Goncharov"},
+    {name = "Aglaia Tcidulko"},
+]
+keywords = [
+    "bioinformatics",
+    "knowledge-graph",
+    "phenotype-prediction",
+]
+
+dependencies = [
+    "biocypher>=0.11.0",
+    "numpy>=1.26",
+    "obonet>=1.1.1",
+    "pandas>=2.2",
+    "pronto>=2.7.3",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+kge = [
+    "pykeen>=1.11.1",
+    "scikit-learn>=1.4",
+    "torch>=2.2",
+]
+
+rgcn = [
+    "scikit-learn>=1.4",
+    "torch>=2.2",
+    "torch-geometric>=2.7.0",
+]
+
+ml = [
+    "pykeen>=1.11.1",
+    "scikit-learn>=1.4",
+    "torch>=2.2",
+    "torch-geometric>=2.7.0",
+]
+
+viz = [
+    "matplotlib>=3.8",
+    "seaborn>=0.13",
+]
+
+notebooks = [
+    "jupyterlab>=4.0",
+    "ipykernel>=6.0",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.10",
+    "pre-commit>=3.7",
+    "pytest-cov>=5.0",
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+src = ["src", "scripts", "tests"]
+extend-exclude = [
+    "biocypher-log",
+    "data",
+    "logs",
+    "pykeen_out",
+    "results",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E501"]
+
+[tool.ruff.format]
+quote-style = "single"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+warn_unused_configs = true

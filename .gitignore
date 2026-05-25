@@ -1,0 +1,45 @@
+# Data
+data/raw/
+data/biocypher/
+data/processed/
+
+# Model weights and checkpoints
+*.pt
+*.pkl
+*.pth
+*.gz
+*.tar.gz
+
+# Logs
+logs/
+*.log
+
+# Results — binary artifacts
+results/**/*.pt
+results/**/*.pkl
+results/**/*.pth
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Environments
+.venv/
+venv/
+env/
+
+# Tools
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# OS
+.DS_Store
+Thumbs.db

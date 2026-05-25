@@ -1,0 +1,17 @@
+biocypher:
+  offline: true
+  debug: false
+  cache_directory: .cache
+
+  head_ontology:
+    url: https://github.com/biolink/biolink-model/raw/v3.2.1/biolink-model.owl.ttl
+    root_node: entity
+
+neo4j:
+  delimiter: '\t'
+  array_delimiter: "|"
+  skip_duplicate_nodes: true
+  skip_bad_relationships: true
+  node_labels_order: Ascending
+  edge_labels_order: Leaves
+  # import_call_bin_prefix: /opt/homebrew/bin/

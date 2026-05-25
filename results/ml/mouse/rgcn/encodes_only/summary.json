@@ -1,0 +1,19 @@
+{
+  "condition": "encodes_only",
+  "species": "mouse",
+  "target_relation": "MouseGeneHasMpTopTerm",
+  "relations": "MouseGeneEncodesProtein",
+  "mean_auprc": 0.2048,
+  "mean_baseline": 0.1968,
+  "improvement_x": 1.041,
+  "n_entities": 18154,
+  "n_context_edges": 9077,
+  "n_genes_in_graph": 9077,
+  "n_genes_missing": 8152,
+  "rgcn_epochs": 500,
+  "rgcn_dim": 128,
+  "lr": 0.001,
+  "batch_size": 4096,
+  "num_negs_per_pos": 5,
+  "elapsed_s": 16.9
+}

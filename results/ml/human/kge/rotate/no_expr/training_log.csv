@@ -1,0 +1,79 @@
+type,step,key,value
+parameter,0,dataset,<user defined>
+parameter,0,training,<user defined>
+parameter,0,testing,<user defined>
+parameter,0,validation,<user defined>
+parameter,0,model,RotatE
+parameter,0,model_kwargs.embedding_dim,128
+parameter,0,model_kwargs.random_seed,42
+parameter,0,model_kwargs.loss,"MarginRankingLoss(
+  (margin_activation): ReLU()
+)"
+parameter,0,model_kwargs.entity_initializer,<function xavier_uniform_ at 0x11624c2c0>
+parameter,0,model_kwargs.relation_initializer,<function init_phases at 0x1162a5bc0>
+parameter,0,model_kwargs.relation_constrainer,<function complex_normalize at 0x112208d60>
+parameter,0,model_kwargs.regularizer,
+parameter,0,model_kwargs.regularizer_kwargs,
+parameter,0,loss_kwargs,
+parameter,0,regularizer_kwargs,
+parameter,0,optimizer,Adam
+parameter,0,optimizer_kwargs.lr,0.001
+parameter,0,optimizer_kwargs.betas,"(0.9, 0.999)"
+parameter,0,optimizer_kwargs.eps,1e-08
+parameter,0,optimizer_kwargs.weight_decay,0
+parameter,0,optimizer_kwargs.amsgrad,False
+parameter,0,optimizer_kwargs.maximize,False
+parameter,0,optimizer_kwargs.foreach,
+parameter,0,optimizer_kwargs.capturable,False
+parameter,0,optimizer_kwargs.differentiable,False
+parameter,0,optimizer_kwargs.fused,
+parameter,0,optimizer_kwargs.decoupled_weight_decay,False
+parameter,0,negative_sampler,BasicNegativeSampler
+parameter,0,negative_sampler_kwargs.num_negs_per_pos,64
+parameter,0,training_loop,SLCWATrainingLoop
+parameter,0,training_loop_kwargs.negative_sampler,<class 'pykeen.sampling.basic_negative_sampler.BasicNegativeSampler'>
+parameter,0,training_loop_kwargs.negative_sampler_kwargs.num_negs_per_pos,64
+parameter,0,evaluator,RankBasedEvaluator
+parameter,0,evaluator_kwargs.filtered,True
+parameter,0,num_epochs,169
+parameter,0,batch_size,2048
+parameter,0,checkpoint_name,rotate.pt
+parameter,0,checkpoint_directory,results/ml/human/kge/rotate/no_expr/checkpoints
+parameter,0,checkpoint_frequency,25
+metric,1,loss,0.38510404068206433
+metric,2,loss,0.2428909760235734
+metric,3,loss,0.2213221042405201
+metric,4,loss,0.1956682555723291
+metric,5,loss,0.16225178049334996
+metric,6,loss,0.13083547237427426
+metric,7,loss,0.1080373234040878
+metric,8,loss,0.09224146110976296
+metric,9,loss,0.08188617905358223
+metric,10,loss,0.07430976123120714
+metric,11,loss,0.06851732297034203
+metric,12,loss,0.06386848743454816
+metric,13,loss,0.060036692642587146
+metric,14,loss,0.056934287072108264
+metric,15,loss,0.05415733277263269
+metric,16,loss,0.051670426565697924
+metric,17,loss,0.049272564903907634
+metric,18,loss,0.04729616536684177
+metric,19,loss,0.04544467683331373
+metric,20,loss,0.043657278233376735
+metric,21,loss,0.042054303414836715
+metric,22,loss,0.04052299709071087
+metric,23,loss,0.039045246286545626
+metric,24,loss,0.037747441174045895
+metric,25,loss,0.03643298657603153
+metric,26,loss,0.035435741948050284
+metric,27,loss,0.034207467288407595
+metric,28,loss,0.033177347484394465
+metric,29,loss,0.032207818513241
+metric,30,loss,0.03127365449702815
+metric,31,loss,0.0303775683037528
+metric,32,loss,0.02958225534702278
+metric,33,loss,0.028800409955251568
+metric,34,loss,0.02801515171815197
+metric,35,loss,0.027259543954634466
+metric,36,loss,0.026539209514919213
+metric,37,loss,0.025854081984310714

@@ -1,0 +1,37 @@
+# Minimal R-GCN pipeline config for the mouse BioCypher graph.
+#
+# Run:
+#   uv run python run_rgcn.py --config configs/machine_learning/rgcn_mouse.yaml
+
+species: mouse
+data_dir: null  # null = newest data/biocypher/mouse_* output from run_kg.py
+out_dir: results/ml/mouse/rgcn
+seed: 42
+
+target_relation: MouseGeneHasMpTopTerm
+
+conditions:
+  - all
+  - no_go
+  - no_ppi
+  - no_expr
+  - encodes_only
+
+# Model settings
+dim: 128
+rgcn_epochs: 500
+lr: 0.001
+batch_size: 4096
+
+# Negative sampling settings
+num_negs_per_pos: 5
+
+# Evaluation settings
+train_frac: 0.80
+classifier_max_iter: 1000
+classifier_C: 1.0
+
+# Parallel execution
+parallel: false
+max_workers: null
+threads_per_worker: null

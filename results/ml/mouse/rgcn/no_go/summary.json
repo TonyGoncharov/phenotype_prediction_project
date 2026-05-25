@@ -1,0 +1,19 @@
+{
+  "condition": "no_go",
+  "species": "mouse",
+  "target_relation": "MouseGeneHasMpTopTerm",
+  "relations": "MouseGeneEncodesProtein|MouseGeneExpressedInTissue|MouseProteinInteractsWith",
+  "mean_auprc": 0.2934,
+  "mean_baseline": 0.1968,
+  "improvement_x": 1.491,
+  "n_entities": 20951,
+  "n_context_edges": 75697,
+  "n_genes_in_graph": 9077,
+  "n_genes_missing": 8152,
+  "rgcn_epochs": 500,
+  "rgcn_dim": 128,
+  "lr": 0.001,
+  "batch_size": 4096,
+  "num_negs_per_pos": 5,
+  "elapsed_s": 46.9
+}

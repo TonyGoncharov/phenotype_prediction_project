@@ -1,0 +1,60 @@
+{
+  "model": "RotatE",
+  "species": "human",
+  "target_relation": "HumanGeneHasMpTopTerm",
+  "device": "cpu",
+  "include_relations": [
+    "HumanGeneEncodesProtein",
+    "HumanGeneExpressedInTissue",
+    "HumanGeneHasMpTopTerm",
+    "HumanProteinInteractsWith",
+    "TissueMappedToUberon"
+  ],
+  "pre_split": true,
+  "graph": {
+    "num_entities": 47908,
+    "num_relations": 5,
+    "num_triples_total": 1716186,
+    "num_triples_train": 1520419,
+    "num_triples_val": 190053,
+    "num_triples_test": 5714
+  },
+  "config": {
+    "model": "RotatE",
+    "embedding_dim": 128,
+    "batch_size": 2048,
+    "lr": 0.001,
+    "num_negs_per_pos": 64,
+    "train_frac": 0.8,
+    "val_frac": 0.1,
+    "random_seed": 42,
+    "eval_batch_size": 128,
+    "checkpoint_frequency": 25,
+    "target_steps": 80000,
+    "es_patience": 0,
+    "es_frequency": 10,
+    "es_delta": 0.002,
+    "species": "human",
+    "data_dir": null,
+    "out_dir": "results/ml/human/kge/rotate",
+    "target_relation": "HumanGeneHasMpTopTerm",
+    "conditions": [
+      "all",
+      "no_go",
+      "no_ppi",
+      "no_expr",
+      "pheno_only"
+    ],
+    "num_epochs": 108
+  },
+  "metrics": {
+    "hits_at_1": 0.048914945747287365,
+    "hits_at_3": 0.14770738536926847,
+    "hits_at_10": 0.3065278263913196,
+    "mrr": 0.1306200474500656,
+    "mr": 551.003662109375,
+    "mean_auprc": 0.20486135984128126,
+    "auprc_classes": 24
+  },
+  "gp_metrics": {}
+}

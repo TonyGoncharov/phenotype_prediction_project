@@ -1,0 +1,19 @@
+{
+  "condition": "no_go",
+  "species": "human",
+  "target_relation": "HumanGeneHasMpTopTerm",
+  "relations": "HumanGeneEncodesProtein|HumanGeneExpressedInTissue|HumanProteinInteractsWith|TissueMappedToUberon",
+  "mean_auprc": 0.5165,
+  "mean_baseline": 0.4301,
+  "improvement_x": 1.201,
+  "n_entities": 23957,
+  "n_context_edges": 747993,
+  "n_genes_in_graph": 5162,
+  "n_genes_missing": 80,
+  "rgcn_epochs": 500,
+  "rgcn_dim": 128,
+  "lr": 0.001,
+  "batch_size": 4096,
+  "num_negs_per_pos": 5,
+  "elapsed_s": 261.3
+}

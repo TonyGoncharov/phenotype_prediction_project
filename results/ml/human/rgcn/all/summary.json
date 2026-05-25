@@ -1,0 +1,19 @@
+{
+  "condition": "all",
+  "species": "human",
+  "target_relation": "HumanGeneHasMpTopTerm",
+  "relations": "all",
+  "mean_auprc": 0.5329,
+  "mean_baseline": 0.4301,
+  "improvement_x": 1.239,
+  "n_entities": 36500,
+  "n_context_edges": 839041,
+  "n_genes_in_graph": 5217,
+  "n_genes_missing": 25,
+  "rgcn_epochs": 500,
+  "rgcn_dim": 128,
+  "lr": 0.001,
+  "batch_size": 4096,
+  "num_negs_per_pos": 5,
+  "elapsed_s": 335.8
+}

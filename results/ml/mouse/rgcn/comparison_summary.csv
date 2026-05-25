@@ -1,0 +1,6 @@
+condition,species,target_relation,relations,mean_auprc,mean_baseline,improvement_x,n_entities,n_context_edges,n_genes_in_graph,n_genes_missing,rgcn_epochs,rgcn_dim,lr,batch_size,num_negs_per_pos,elapsed_s,delta_mean_auprc_vs_all
+all,mouse,MouseGeneHasMpTopTerm,all,0.3618,0.1968,1.838,44223,316949,14274,2955,500,128,0.001,4096,5,147.3,0.0
+no_go,mouse,MouseGeneHasMpTopTerm,MouseGeneEncodesProtein|MouseGeneExpressedInTissue|MouseProteinInteractsWith,0.2934,0.1968,1.491,20951,75697,9077,8152,500,128,0.001,4096,5,46.9,0.0684
+no_ppi,mouse,MouseGeneHasMpTopTerm,MouseGeneEncodesProtein|MouseGeneExpressedInTissue|MouseGeneHasGoTerm,0.3742,0.1968,1.901,41426,250329,14274,2955,500,128,0.001,4096,5,122.0,-0.0124
+no_expr,mouse,MouseGeneHasMpTopTerm,MouseGeneEncodesProtein|MouseGeneHasGoTerm|MouseProteinInteractsWith,0.3681,0.1968,1.871,44223,316949,14274,2955,500,128,0.001,4096,5,159.7,-0.0063
+encodes_only,mouse,MouseGeneHasMpTopTerm,MouseGeneEncodesProtein,0.2048,0.1968,1.041,18154,9077,9077,8152,500,128,0.001,4096,5,16.9,0.157

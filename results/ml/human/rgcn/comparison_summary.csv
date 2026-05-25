@@ -1,0 +1,6 @@
+condition,species,target_relation,relations,mean_auprc,mean_baseline,improvement_x,n_entities,n_context_edges,n_genes_in_graph,n_genes_missing,rgcn_epochs,rgcn_dim,lr,batch_size,num_negs_per_pos,elapsed_s,delta_mean_auprc_vs_all
+all,human,HumanGeneHasMpTopTerm,all,0.5329,0.4301,1.239,36500,839041,5217,25,500,128,0.001,4096,5,335.8,0.0
+no_go,human,HumanGeneHasMpTopTerm,HumanGeneEncodesProtein|HumanGeneExpressedInTissue|HumanProteinInteractsWith|TissueMappedToUberon,0.5165,0.4301,1.201,23957,747993,5162,80,500,128,0.001,4096,5,261.3,0.0164
+no_ppi,human,HumanGeneHasMpTopTerm,HumanGeneEncodesProtein|HumanGeneExpressedInTissue|HumanGeneHasGoTerm|TissueMappedToUberon,0.5382,0.4301,1.251,22760,296423,5217,25,500,128,0.001,4096,5,125.6,-0.0053
+no_expr,human,HumanGeneHasMpTopTerm,HumanGeneEncodesProtein|HumanGeneHasGoTerm|HumanProteinInteractsWith,0.5091,0.4301,1.184,36369,638601,5206,36,500,128,0.001,4096,5,206.2,0.0238
+encodes_only,human,HumanGeneHasMpTopTerm,HumanGeneEncodesProtein,0.4281,0.4301,0.995,9870,4935,4935,307,500,128,0.001,4096,5,10.7,0.1048

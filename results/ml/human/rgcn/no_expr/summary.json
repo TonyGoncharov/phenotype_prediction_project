@@ -1,0 +1,19 @@
+{
+  "condition": "no_expr",
+  "species": "human",
+  "target_relation": "HumanGeneHasMpTopTerm",
+  "relations": "HumanGeneEncodesProtein|HumanGeneHasGoTerm|HumanProteinInteractsWith",
+  "mean_auprc": 0.5091,
+  "mean_baseline": 0.4301,
+  "improvement_x": 1.184,
+  "n_entities": 36369,
+  "n_context_edges": 638601,
+  "n_genes_in_graph": 5206,
+  "n_genes_missing": 36,
+  "rgcn_epochs": 500,
+  "rgcn_dim": 128,
+  "lr": 0.001,
+  "batch_size": 4096,
+  "num_negs_per_pos": 5,
+  "elapsed_s": 206.2
+}

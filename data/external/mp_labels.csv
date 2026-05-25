@@ -1,0 +1,26 @@
+mp_term_id,mp_label,mp_short
+MP:0002006,neoplasm,Neoplasm
+MP:0003631,nervous system phenotype,Nervous system
+MP:0005367,renal/urinary system phenotype,Renal/urinary
+MP:0005369,muscle phenotype,Muscle
+MP:0005370,liver/biliary system phenotype,Liver/biliary
+MP:0005371,limbs/digits/tail phenotype,Limbs/digits
+MP:0005375,adipose tissue phenotype,Adipose tissue
+MP:0005376,homeostasis/metabolism phenotype,Homeostasis/metab.
+MP:0005377,hearing/vestibular/ear phenotype,Hearing/ear
+MP:0005378,growth/size/body region phenotype,Growth/body size
+MP:0005379,endocrine/exocrine gland phenotype,Endocrine/exocrine
+MP:0005380,embryo phenotype,Embryo
+MP:0005381,digestive/alimentary phenotype,Digestive
+MP:0005382,craniofacial phenotype,Craniofacial
+MP:0005384,cellular phenotype,Cellular
+MP:0005385,cardiovascular system phenotype,Cardiovascular
+MP:0005386,behavior/neurological phenotype,Behavior/neurol.
+MP:0005387,immune system phenotype,Immune system
+MP:0005388,respiratory system phenotype,Respiratory
+MP:0005389,reproductive system phenotype,Reproductive
+MP:0005390,skeleton phenotype,Skeleton
+MP:0005391,vision/eye phenotype,Vision/eye
+MP:0005397,hematopoietic system phenotype,Hematopoietic
+MP:0010768,mortality/aging,Mortality/aging
+MP:0010771,integument phenotype,Integument
