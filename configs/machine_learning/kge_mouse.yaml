@@ -1,0 +1,39 @@
+# Minimal KGE pipeline config for the mouse BioCypher graph.
+#
+# Run:
+#   uv run python run_kge.py --config configs/machine_learning/kge_mouse.yaml
+
+species: mouse
+data_dir: null  # null = newest data/biocypher/mouse_* output from run_kg.py
+out_dir: results/ml/mouse/kge/rotate
+random_seed: 42
+
+target_relation: MouseGeneHasMpTopTerm
+
+conditions:
+  - all
+  - no_go
+  - no_ppi
+  - no_expr
+  - pheno_only
+
+# Model settings
+model: RotatE
+embedding_dim: 128
+target_steps: 80000
+batch_size: 2048
+lr: 0.001
+
+# Negative sampling settings
+num_negs_per_pos: 64
+
+# Evaluation settings
+train_frac: 0.80
+val_frac: 0.10
+eval_batch_size: 128
+
+# Checkpointing / early stopping
+checkpoint_frequency: 25
+es_patience: 0
+es_frequency: 10
+es_delta: 0.002
