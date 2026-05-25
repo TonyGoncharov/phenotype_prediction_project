@@ -14,3 +14,7 @@ data/
 
 # Environment
 .cache/
+
+# Execution artefacts
+biocypher-log/
+logs/
