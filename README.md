@@ -18,6 +18,24 @@ tracks:
 Graph construction uses BioCypher. Dependency management uses `uv`
 exclusively.
 
+## Goals and Objectives
+
+The aim of this work is to investigate similarities and dissimilarities in the
+determinants of gene-phenotype relations in humans and mice.
+
+Specific objectives:
+
+1. Construct a heterogeneous knowledge graph for human and mouse genes
+   integrating protein-protein interactions (BioGRID), tissue-wide gene
+   expression (GTEx / MGI GXD), and Gene Ontology annotations.
+2. Train a leakage-free R-GCN encoder to predict associations between genes
+   and top-level Mammalian Phenotype (MP) terms, using gene-phenotype edges
+   as classification targets only (never as message-passing context).
+3. Quantify the independent contribution of each biological data layer via a
+   systematic ablation study (full graph vs. leave-one-layer-out conditions).
+4. Compare layer contributions between the human and mouse models to identify
+   species-specific predictive signals.
+
 ## Installation
 
 System requirements:
@@ -42,7 +60,25 @@ Download raw data into `data/raw/`:
 uv run python scripts/download_data.py
 ```
 
-Large raw and processed data live under `data/`, which is gitignored.
+The script fetches all required files from the Zenodo record
+[10.5281/zenodo.20379520](https://doi.org/10.5281/zenodo.20379520) and saves
+them to `data/raw/`. Files that already exist are skipped. Large raw and
+processed data live under `data/`, which is gitignored.
+
+Alternatively, each file can be downloaded directly from its original source:
+
+| File | Source |
+|---|---|
+| `hp.obo` | [Human Phenotype Ontology](https://hpo.jax.org/) |
+| `genes_to_phenotype.txt` | [Human Phenotype Ontology](https://hpo.jax.org/) |
+| `HP2MP.tsv` | [Mouse Genome Informatics](https://www.informatics.jax.org/) |
+| `mp.obo` | [Mammalian Phenotype Ontology](https://www.informatics.jax.org/vocab/mp_ontology/) |
+| `MGI_PhenoGenoMP.rpt` | [Mouse Genome Database](https://www.informatics.jax.org/) |
+| `gxdrnaseq.tar.gz`, `gxd_uberon_mapping.tsv` | [MGI Gene Expression Database](https://www.informatics.jax.org/expression.shtml) |
+| `gene2go.gz`, `gene_info.gz` | [NCBI Gene FTP](https://ftp.ncbi.nlm.nih.gov/gene/DATA/) |
+| `GTEx_Analysis_v10_RNASeQCv2.4.2_gene_median_tpm.gct.gz` | [GTEx Portal](https://gtexportal.org/) |
+| `BIOGRID-ALL-5.0.256.tab3.txt` | [BioGRID](https://thebiogrid.org/) |
+| `basic.obo` | [Uberon anatomy ontology](https://obophenotype.github.io/uberon/) |
 
 ## Usage
 
@@ -137,24 +173,133 @@ Primary generated outputs:
 - `results/ml/<species>/kge/<model>/<condition>/`: PyKEEN checkpoints,
   metrics, and prediction artifacts.
 
+## Results
+
+### Overall performance
+
+The full R-GCN pipeline achieved a macro-averaged AUPRC of **0.55** across 24
+MP top-level phenotype classes on the human test set (mean improvement over
+random baseline: **+0.116**). On the mouse test set the mean baseline
+improvement was **+0.171** across 28 phenotype classes. The `encodes_only`
+condition (gene-protein edges only) yielded near-zero improvement for both human
+(+0.004) and mouse (+0.040), confirming that functional context — rather than
+gene identity alone — drives predictive signals.
+
+### Ablation: human graph
+
+Removal of GO annotations caused the largest mean performance drop (−0.028),
+followed by GTEx expression (−0.019) and PPI (−0.011), indicating that GO
+provides the strongest predictive signal among the tested context layers.
+
+![Human ablation heatmap — AUPRC improvement per phenotype class and condition](figures/human_ablation_heatmap_improvement.png)
+
+![Human ablation violin — distribution of per-phenotype AUPRC improvement across conditions](figures/human_ablation_improvement_violin.png)
+
+### Ablation: mouse graph
+
+GO removal had the strongest negative effect, with a much larger mean drop than
+in the human graph (−0.106). PPI removal had almost no effect (+0.001), and
+removing the expression layer slightly improved performance (+0.011), suggesting
+that MGI GXD RNA-seq introduces noise rather than a useful signal in the current
+mouse graph.
+
+![Mouse ablation heatmap — AUPRC per phenotype class and condition](figures/mouse_heatmap_all.png)
+
+![Mouse ablation violin — distribution of per-phenotype AUPRC improvement across conditions](figures/mouse_ablation_violin.png)
+
+### Per-phenotype heterogeneity
+
+Top-performing human phenotype classes (Nervous system 0.87, Craniofacial 0.77,
+Skeleton 0.73) consistently maintained high AUPRC across all ablation conditions.
+Lower-performing classes (Adipose tissue 0.11, Embryo 0.22, Cellular 0.28)
+showed greater sensitivity to layer removal. In the human graph, removing GTEx
+expression improved performance for Cellular (+0.19 vs +0.14) and Growth/body
+size phenotypes. In the mouse graph, the No Expression condition outperformed
+All layers for Nervous system (+0.31 vs +0.28) and Digestive (+0.22 vs +0.17).
+
+![Human ablation heatmap — absolute AUPRC per phenotype class and condition](figures/human_ablation_heatmap.png)
+
+## Conclusions
+
+- **Functional annotations (GO) are the dominant predictor** of gene-phenotype
+  associations in both species. GO removal causes the largest performance drop in
+  human (−0.028) and by far the largest in mouse (−0.106).
+- **Expression layer contributions diverge between species.** GTEx tissue-level
+  expression provides a consistent, moderate gain in the human model, whereas
+  MGI GXD RNA-seq marginally harms mouse model performance on average. This
+  likely reflects the broader and more uniform sampling of GTEx compared with the
+  heterogeneous developmental and conditional experiments in MGI GXD.
+- **PPI provides complementary but modest gains.** Protein interaction edges
+  contribute consistently in the human model but contribute almost nothing in the
+  mouse model, where GO annotations may already capture sufficient functional
+  context.
+- **Gene identity alone is insufficient.** The `encodes_only` baseline (near-zero
+  improvement) shows that neighbourhood aggregation over biological context edges
+  is essential for phenotype prediction.
+- **Per-phenotype heterogeneity is substantial.** A uniform-architecture model
+  cannot be simultaneously optimal for all phenotype classes, motivating future
+  work on attention-based GNN architectures with adaptive per-relation-type
+  weights and phenotype-stratified model selection.
+
 ## Repository Layout
 
 ```text
 phenotype_prediction_project/
-|-- run_kg.py
-|-- run_kge.py
-|-- run_rgcn.py
-|-- configs/
-|   |-- knowledge_graph/
-|   `-- machine_learning/
-|-- src/
-|   |-- knowledge_graph/
-|   |-- machine_learning/
-|   `-- utils/
-|-- scripts/
-|-- tests/
-|-- docs/
-`-- data/
+├── run_kg.py                          # entry point: build BioCypher KG
+├── run_kge.py                         # entry point: train & evaluate KGE (RotatE)
+├── run_rgcn.py                        # entry point: train & evaluate R-GCN + logistic regression
+│
+├── configs/
+│   ├── knowledge_graph/
+│   │   ├── biocypher_config.yaml      # BioCypher driver settings
+│   │   ├── schema_config_human.yaml   # node/edge types for the human graph
+│   │   └── schema_config_mouse.yaml   # node/edge types for the mouse graph
+│   └── machine_learning/
+│       ├── kge_human.yaml             # RotatE hyperparameters for human
+│       ├── kge_mouse.yaml             # RotatE hyperparameters for mouse
+│       ├── rgcn_human.yaml            # R-GCN hyperparameters for human
+│       └── rgcn_mouse.yaml            # R-GCN hyperparameters for mouse
+│
+├── src/
+│   ├── knowledge_graph/
+│   │   ├── adapters/                  # BioCypher adapters (PPI, GO, expression, phenotype, Uberon)
+│   │   ├── layers/                    # per-layer TSV export logic
+│   │   ├── preprocessing/             # HP→MP mapping, ontology traversal
+│   │   ├── build_graph.py             # orchestrates adapter calls into BioCypher
+│   │   └── gene_ids.py                # HGNC / MGI gene identifier resolution
+│   ├── machine_learning/
+│   │   ├── common/                    # data loading, splits, metrics, leakage guard
+│   │   ├── kge/                       # PyKEEN training, ablation, evaluation
+│   │   └── rgcn/                      # R-GCN model, embeddings, classifier, ablation
+│   └── utils/
+│       ├── gene_info.py               # NCBI gene_info helpers
+│       └── logging_config.py          # shared logging setup
+│
+├── scripts/
+│   ├── download_data.py               # downloads all raw files from Zenodo
+│   └── mouse/
+│       └── make_uberon_mapping.py     # generates gxd_uberon_mapping.tsv
+│
+├── data/                              # gitignored — populated at runtime
+│   ├── raw/                           # files downloaded by scripts/download_data.py
+│   ├── processed/
+│   │   ├── human/                     # normalized node_*.tsv and edge_*.tsv tables
+│   │   └── mouse/                     # same for mouse
+│   ├── biocypher/
+│   │   └── {species}_{timestamp}/     # BioCypher CSV exports for Neo4j import
+│   └── external/
+│       └── mp_labels.csv              # MP top-level term display names
+│
+└── results/                           # gitignored — populated at runtime
+    └── ml/
+        ├── human/
+        │   ├── rgcn/
+        │   │   └── {condition}/       # model checkpoint, per-phenotype AUPRC TSV, logs
+        │   └── kge/
+        │       └── {model}/{condition}/  # PyKEEN checkpoint, MRR/Hits@K, AUPRC TSV
+        └── mouse/
+            └── rgcn/
+                └── {condition}/
 ```
 
 ## Evaluation Contract
