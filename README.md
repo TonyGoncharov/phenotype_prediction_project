@@ -30,7 +30,7 @@ Specific objectives:
    expression (GTEx / MGI GXD), and Gene Ontology annotations.
 2. Train a leakage-free R-GCN encoder to predict associations between genes
    and top-level Mammalian Phenotype (MP) terms, using gene-phenotype edges
-   as classification targets only (never as message-passing context).
+   as classification targets only.
 3. Quantify the independent contribution of each biological data layer via a
    systematic ablation study (full graph vs. leave-one-layer-out conditions).
 4. Compare layer contributions between the human and mouse models to identify
@@ -43,8 +43,6 @@ System requirements:
 - Linux or macOS (Windows has not been tested).
 - Python 3.11 or newer.
 - `uv` for dependency management.
-- For smoke tests: 4 CPU threads and at least 16 GB RAM.
-- For full CPU runs: 16 or more CPU threads and 64 GB RAM are recommended.
 
 Set up the repository:
 
@@ -74,10 +72,11 @@ Alternatively, each file can be downloaded directly from its original source:
 | `HP2MP.tsv` | [Mouse Genome Informatics](https://www.informatics.jax.org/) |
 | `mp.obo` | [Mammalian Phenotype Ontology](https://www.informatics.jax.org/vocab/mp_ontology/) |
 | `MGI_PhenoGenoMP.rpt` | [Mouse Genome Database](https://www.informatics.jax.org/) |
-| `gxdrnaseq.tar.gz`, `gxd_uberon_mapping.tsv` | [MGI Gene Expression Database](https://www.informatics.jax.org/expression.shtml) |
-| `gene2go.gz`, `gene_info.gz` | [NCBI Gene FTP](https://ftp.ncbi.nlm.nih.gov/gene/DATA/) |
+| `gxdrnaseq.tar.gz`, `gxd_uberon_mapping.tsv` | [MGI Gene Expression Database](https://www.informatics.jax.org/downloads/reports/gxdrnaseq/gxdrnaseq.tar.gz) |
+| `gene2go.gz`,  | [NCBI Gene FTP](https://ftp.ncbi.nlm.nih.gov/gene/DATA/gene2go.gz) |
+| `gene_info.gz` | [NCBI Gene FTP](https://ftp.ncbi.nlm.nih.gov/gene/DATA/gene_info.gz) |
 | `GTEx_Analysis_v10_RNASeQCv2.4.2_gene_median_tpm.gct.gz` | [GTEx Portal](https://gtexportal.org/) |
-| `BIOGRID-ALL-5.0.256.tab3.txt` | [BioGRID](https://thebiogrid.org/) |
+| `BIOGRID-ALL-5.0.256.tab3.txt` | [BioGRID](https://downloads.thebiogrid.org/File/BioGRID/Release-Archive/BIOGRID-5.0.256/BIOGRID-ALL-5.0.256.tab3.zip) |
 | `basic.obo` | [Uberon anatomy ontology](https://obophenotype.github.io/uberon/) |
 
 ## Usage
@@ -262,7 +261,7 @@ phenotype_prediction_project/
 │
 ├── src/
 │   ├── knowledge_graph/
-│   │   ├── adapters/                  # BioCypher adapters (PPI, GO, expression, phenotype, Uberon)
+│   │   ├── adapters/                  # BioCypher adapters
 │   │   ├── layers/                    # per-layer TSV export logic
 │   │   ├── preprocessing/             # HP→MP mapping, ontology traversal
 │   │   ├── build_graph.py             # orchestrates adapter calls into BioCypher
@@ -280,7 +279,7 @@ phenotype_prediction_project/
 │   └── mouse/
 │       └── make_uberon_mapping.py     # generates gxd_uberon_mapping.tsv
 │
-├── data/                              # gitignored — populated at runtime
+├── data/                              # gitignored
 │   ├── raw/                           # files downloaded by scripts/download_data.py
 │   ├── processed/
 │   │   ├── human/                     # normalized node_*.tsv and edge_*.tsv tables
@@ -290,7 +289,7 @@ phenotype_prediction_project/
 │   └── external/
 │       └── mp_labels.csv              # MP top-level term display names
 │
-└── results/                           # gitignored — populated at runtime
+└── results/                           # gitignored
     └── ml/
         ├── human/
         │   ├── rgcn/
