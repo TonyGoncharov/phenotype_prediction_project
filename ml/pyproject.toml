@@ -1,0 +1,19 @@
+[project]
+name = "g2p-ml"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "TonyGoncharov", email = "potteromics@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "g2p-contract",
+]
+
+[build-system]
+requires = ["uv_build>=0.9.28,<0.10.0"]
+build-backend = "uv_build"
+
+[tool.uv.sources]
+g2p-contract = { workspace = true }
