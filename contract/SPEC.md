@@ -18,13 +18,13 @@ Keywords: **MUST** / **MUST NOT** are hard requirements; the validator reports a
 
 1. `g2p_kg` and `g2p_ml` interact only through a graph release and the `g2p_contract` package.
    They MUST NOT import each other.
-2. Labels (gene -> phenotype class) are stored separately from context edges and MUST NOT appear in `edges`.
+2. Labels (gene -> phenotype class) are stored separately from context edges and MUST NOT appear in edge files.
 3. A gene symbol is never an ID.
 4. A release is self-describing: `manifest.json` records everything needed to reproduce it (sources, parameters, code version).
 5. A release is deterministic: the same inputs and code produce byte-identical files.
 6. Data are stored at the biological level where they are measured (gene, protein, …).
    `kg` does not collapse levels; `ml` may derive simpler views.
-7. The format is extensible: new layers are added by the procedure in section 4.4.
+7. The format is extensible: a new layer is added as a new edge file, by the procedure in section 4.4, without changing the existing edge files.
 
 ## 2. Release layout
 
@@ -35,12 +35,18 @@ graph-v0.1.0/
 ├── human/
 │   ├── manifest.json
 │   ├── nodes.tsv.gz
-│   ├── edges.tsv.gz
+│   ├── edges/
+│   │   ├── expression.tsv.gz
+│   │   ├── gene_product.tsv.gz
+│   │   ├── go.tsv.gz
+│   │   └── ppi.tsv.gz
 │   ├── classes.tsv.gz
 │   └── labels.tsv.gz
 └── mouse/
-    └── (same five files)
+    └── (same files)
 ```
+
+`edges/` holds one file per layer (section 4.1).
 
 All `.tsv.gz` files:
 
@@ -49,7 +55,7 @@ All `.tsv.gz` files:
 - an empty string means "no value";
 - list values are joined with `|`;
 - decimal separator is `.`;
-- rows are sorted: `nodes` by `id`; `edges` by (`src`, `relation`, `dst`); `labels` by (`gene_id`, `class_id`); `classes` by `class_id`;
+- rows are sorted: `nodes` by `id`; each edge file by (`src`, `relation`, `dst`); `labels` by (`gene_id`, `class_id`); `classes` by `class_id`;
 - columns appear in the order given below.
 
 ## 3. Nodes: `nodes.tsv.gz`
@@ -57,14 +63,14 @@ All `.tsv.gz` files:
 Contains every node of the context graph **and** every labelled gene, even a gene with no edges.
 
 | Column | Type | Required | Description |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `id` | str | yes | unique CURIE (Compact URI) |
 | `type` | enum | yes | node type (see below) |
 | `name` | str | no | gene symbol or term label |
 | `xrefs` | list[str] | no | other IDs, e.g. `HGNC:11998\|Ensembl:ENSG00000141510` |
 
 | `type` | `id` pattern (regex, regular expression) | Example |
-|---|---|---|
+| --- | --- | --- |
 | `gene` | `^NCBIGene:[1-9][0-9]*$` | `NCBIGene:7157` |
 | `protein` | see below | `UniProtKB:P04637` |
 | `go_term` | `^GO:[0-9]{7}$` | `GO:0005515` |
@@ -94,41 +100,48 @@ Rules:
 - **[OPEN]** GTEx cell lines (`Cells_*`) have no suitable Uberon term.
 - **[OPEN]** Protein isoforms as separate nodes (e.g. `UniProtKB:P04637-2`).
 
-## 4. Context edges: `edges.tsv.gz`
+## 4. Context edges: `edges/<layer>.tsv.gz`
 
 Context edges describe what is known about genes and their products.
 The set of layers is not fixed: we plan to add more (for example, post-translational modifications).
 This section lists the current layers and MUST be updated whenever a layer is added or changed (section 4.4).
 
-### 4.1 Columns
+### 4.1 Files and columns
 
-Core columns, the same for every layer:
+Each layer is stored in its own file, `edges/<layer>.tsv.gz`.
+A release has exactly one file for each layer in the manifest `layers` list (section 7) and no other edge files.
+The file name gives the layer, so there is no `layer` column.
+
+Every edge file starts with the core columns:
 
 | Column | Type | Required | Description |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `src` | str | yes | node `id` |
-| `relation` | enum | yes | see section 4.2 |
+| `relation` | enum | yes | a relation of this layer, see section 4.2 |
 | `dst` | str | yes | node `id` |
-| `layer` | enum | yes | determined by `relation` |
 
-Attribute columns follow the core columns.
-Each belongs to one layer and is empty for all other layers.
+The layer's attribute columns follow, in the order given here.
+A file has no attribute columns of other layers.
 
-| Column | Type | Layer | Description |
-|---|---|---|---|
-| `evidence_codes` | list[str] | `go` | GO (Gene Ontology) evidence codes: how each annotation was made |
-| `aspect` | enum | `go` | `P` (biological process), `F` (molecular function) or `C` (cellular component) |
-| `median_tpm` | float | `expression` | median expression level, TPM |
-| `n_experiments` | int | `expression` | number of experiments (GXD) |
-| `n_publications` | int | `ppi` | number of distinct PubMed IDs |
-| `throughput` | enum | `ppi` | `low` or `high` |
+| Layer | Column | Type | Description |
+| --- | --- | --- | --- |
+| `go` | `evidence_codes` | list[str] | GO (Gene Ontology) evidence codes: how each annotation was made |
+| `go` | `aspect` | enum | `P` (biological process), `F` (molecular function) or `C` (cellular component) |
+| `expression` | `median_tpm` | float | median expression level, TPM |
+| `expression` | `n_experiments` | int | number of experiments (GXD) |
+| `ppi` | `n_publications` | int | number of distinct PubMed IDs |
+| `ppi` | `throughput` | enum | `low` or `high` |
+
+`gene_product` has no attribute columns.
+Both species use the same columns; a value the source does not provide is left empty (for example, `n_experiments` in human).
+`ml` MAY concatenate the edge files on the core columns to get one edge table.
 
 ### 4.2 Layers and relations
 
 Relation names are the same for both species (no `Human`/`Mouse` prefix).
 
-| `layer` | `relation` | `src` -> `dst` | Directed | Required attributes |
-|---|---|---|---|---|
+| Layer | `relation` | `src` -> `dst` | Directed | Required attributes |
+| --- | --- | --- | --- | --- |
 | `go` | `gene_has_go_term` | `gene` -> `go_term` | yes | `evidence_codes`, `aspect` |
 | `expression` | `gene_expressed_in_tissue` | `gene` -> `tissue` | yes | `median_tpm` |
 | `gene_product` | `gene_encodes_protein` | `gene` -> `protein` | yes | – |
@@ -146,7 +159,7 @@ Interactions and modifications are properties of proteins, not genes, so protein
 `ml` MAY derive simpler views, such as gene–gene PPI; `kg` does not collapse levels.
 
 `gene_product` is a structural layer: it links genes to the protein-level layers.
-Removing a protein-level layer in an ablation removes only that layer's edges, not `gene_product`.
+Removing a protein-level layer in an ablation means not reading that layer's file; `gene_product` stays.
 
 ### 4.3 Rules
 
@@ -167,8 +180,8 @@ A PR that adds a layer MUST, in the same PR:
 
 1. Add the layer and its relations to section 4.2: `src` and `dst` types, direction, required attributes.
 2. Add any new node types to section 3, with an ID pattern.
-3. Add any new attribute columns to section 4.1.
-   An existing column is never reused with a different meaning.
+3. Add the layer's attribute columns to section 4.1.
+   A column name means the same in every layer; an existing name is never reused with a different meaning.
 4. Add the layer's sources and build parameters to the manifest (section 7).
 5. Update the validator (section 8) and the toy release (section 10).
 6. Bump `contract_version`: minor for a new layer; major if an existing layer changes meaning, IDs or required columns (section 9).
@@ -188,7 +201,7 @@ Both `kg` and `ml` approve the PR.
 Classes are terms of MP (Mammalian Phenotype Ontology).
 
 | Column | Type | Required | Description |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `class_id` | str | yes | `^MP:[0-9]{7}$` |
 | `name` | str | yes | label from `mp.obo` (the MP ontology file) |
 | `set` | enum | yes | `core` or `supplementary` |
@@ -198,7 +211,7 @@ The `core` set is identical in both species.
 Proposed content: 24 direct children of `MP:0000001`.
 
 | `class_id` | Name |
-|---|---|
+| --- | --- |
 | `MP:0002006` | neoplasm |
 | `MP:0003631` | nervous system phenotype |
 | `MP:0005367` | renal/urinary system phenotype |
@@ -236,7 +249,7 @@ Proposed content: 24 direct children of `MP:0000001`.
 Labels come from two phenotype ontologies: HPO (Human Phenotype Ontology, terms `HP:…`) for human and MP for mouse.
 
 | Column | Type | Required | Description |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `gene_id` | str | yes | gene `id` from `nodes` |
 | `class_id` | str | yes | `class_id` from `classes` |
 | `source_ids` | list[str] | yes | source terms: `HP:…` (human), `MP:…` (mouse) |
@@ -267,6 +280,7 @@ Construction (implemented in `kg`; parameters go to the manifest):
   "taxon": "NCBITaxon:9606",
   "created_at": "2026-11-01T12:00:00Z",
   "kg_commit": "<git SHA>",
+  "layers": ["expression", "gene_product", "go", "ppi"],
   "sources": [
     {
       "name": "gene2go",
@@ -302,14 +316,20 @@ Construction (implemented in `kg`; parameters go to the manifest):
   },
   "files": {
     "nodes.tsv.gz": "<sha256>",
-    "edges.tsv.gz": "<sha256>",
     "classes.tsv.gz": "<sha256>",
-    "labels.tsv.gz": "<sha256>"
+    "labels.tsv.gz": "<sha256>",
+    "edges/expression.tsv.gz": "<sha256>",
+    "edges/gene_product.tsv.gz": "<sha256>",
+    "edges/go.tsv.gz": "<sha256>",
+    "edges/ppi.tsv.gz": "<sha256>"
   }
 }
 ```
 
-`files` holds the SHA-256 checksum (sha256) of each data file.
+`layers` lists the layers of the release in alphabetical order; each has its file `edges/<layer>.tsv.gz`.
+Readers take the list of edge files from `layers`, not from the directory contents.
+
+`files` holds the SHA-256 checksum (sha256) of each data file, keyed by its path relative to the species directory.
 
 `layer_coverage` is the fraction of genes with `core` labels that have at least one edge in the layer.
 For a protein-level layer, a gene counts if it encodes (`gene_encodes_protein`) a protein that has an edge in the layer.
@@ -320,14 +340,14 @@ Both sides run the validator from `g2p_contract`: `kg` before publishing, `ml` w
 An error (E) blocks the release; a warning (W) does not.
 
 | # | Check | Level |
-|---|---|---|
-| V1 | All five files exist; sha256 values match `files` in the manifest | E |
-| V2 | Columns, their order and types match this spec | E |
+| --- | --- | --- |
+| V1 | `nodes`, `classes`, `labels` and one edge file per layer in `layers` exist, with no other edge files; sha256 values match `files` in the manifest | E |
+| V2 | Columns, their order and types match this spec; each edge file has the core columns and its own layer's attributes | E |
 | V3 | `id` values are unique and match the pattern for their `type` (section 3) | E |
 | V4 | Both ends of every edge exist in `nodes`, with the types the relation requires | E |
-| V5 | `relation` is in the vocabulary; `layer` matches it | E |
+| V5 | `relation` is in the vocabulary and belongs to the layer of its file | E |
 | V6 | No self-loops, duplicate triples or duplicate labels | E |
-| V7 | No label appears in `edges`; `nodes` has no MP nodes | E |
+| V7 | No label appears in an edge file; `nodes` has no MP nodes | E |
 | V8 | Every `gene_id` in `labels` is in `nodes`; every `class_id` is in `classes` | E |
 | V9 | `layer_coverage` > 0 for every layer | E |
 | V10 | `layer_coverage` ≥ 0.5 for every layer | W |
@@ -362,8 +382,9 @@ V9 and V12 catch two errors of the legacy pipeline: a disconnected mouse express
 
 Names are provisional; nothing is implemented yet.
 
-- `load_release(path) -> Release` – reads and validates a release; returns the `nodes`, `edges`, `classes`, `labels` tables and the manifest.
-- `write_release(path, nodes, edges, classes, labels, manifest)` – writes files in the section 2 format and fills in `counts`, `files` and `layer_coverage`.
+- `load_release(path) -> Release` – reads and validates a release; returns the `nodes`, `classes` and `labels` tables, the edge table of each layer and the manifest.
+- `write_release(path, nodes, edges, classes, labels, manifest)` – writes files in the section 2 format and fills in `layers`, `counts`, `files` and `layer_coverage`.
+  `edges` maps each layer to its table.
 - `validate_release(path) -> Report` – runs the section 8 checks.
 - Constants: node types, relation vocabulary, layers, ID patterns.
 
@@ -371,11 +392,10 @@ Names are provisional; nothing is implemented yet.
 
 1. Protein isoforms as separate nodes (section 3).
 2. GTEx cell lines without a Uberon term (section 3).
-3. One `edges` file for all layers, or one file per layer (`edges/<layer>.tsv.gz`), so that new layers do not add columns to a shared table (section 4).
-4. Candidate layers: GO and Uberon hierarchies, PTMs and the design of modified sites (section 4.4).
-5. GO annotations with IMP/IGI evidence: exclude them, or publish both variants (section 4.3).
-6. One expression threshold rule for both species (section 4.3).
-7. Value of `core_class_min_genes` (section 5).
-8. Filter by HPO annotation frequency (section 6).
-9. Source of single-gene MGI genotypes (section 6).
-10. Which other edge attributes and node features `ml` needs.
+3. Candidate layers: GO and Uberon hierarchies, PTMs and the design of modified sites (section 4.4).
+4. GO annotations with IMP/IGI evidence: exclude them, or publish both variants (section 4.3).
+5. One expression threshold rule for both species (section 4.3).
+6. Value of `core_class_min_genes` (section 5).
+7. Filter by HPO annotation frequency (section 6).
+8. Source of single-gene MGI genotypes (section 6).
+9. Which other edge attributes and node features `ml` needs.
